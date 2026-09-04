@@ -1,0 +1,8 @@
+data:
+  type: multiplication
+  name: mult_4x4
+  digits: 4
+  num_train: 1000
+  num_val: 200
+  num_test: 200
+  seed: 42

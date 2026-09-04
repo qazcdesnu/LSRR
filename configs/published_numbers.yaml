@@ -1,0 +1,27 @@
+# Published baseline numbers for reference table generation
+# † indicates external reported results
+
+gsm8k:
+  - model: "GPT-2 (124M) CoT†"
+    accuracy: 0.142
+    source: "InnerThoughts paper"
+    flops_per_token: 2.5e8
+  - model: "ICoT (GPT-2)†"
+    accuracy: 0.185
+    source: "ICoT paper"
+    flops_per_token: 1.2e9
+  - model: "Coconut (GPT-2)†"
+    accuracy: 0.210
+    source: "Coconut paper"
+    flops_per_token: 1.5e9
+  - model: "CODI (GPT-2)†"
+    accuracy: 0.224
+    source: "CODI paper"
+    flops_per_token: 1.1e9
+
+multiplication_4x4:
+  - model: "Standard Transformer†"
+    accuracy: 0.620
+    source: "Synthetic arithmetic benchmark"
+  - model: "LSRR-HydraQS (Ours)"
+    accuracy: null

@@ -1,0 +1,26 @@
+[project]
+name = "lsrr"
+version = "0.1.0"
+description = "Layer-State Recurrent Reasoner (LSRR) Research Framework"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "transformers",
+    "accelerate",
+    "safetensors",
+    "omegaconf",
+    "pyyaml",
+    "pytest",
+    "datasets",
+    "pandas",
+    "tabulate",
+    "tqdm"
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["lsrr*"]

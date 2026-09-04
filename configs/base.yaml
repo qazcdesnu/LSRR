@@ -1,0 +1,24 @@
+# Base configuration
+seed: 42
+deterministic: true
+
+device: "auto"
+
+train:
+  epochs: 10
+  bs: 64
+  lr: 3.0e-4
+  weight_decay: 1.0e-2
+  grad_clip: 1.0
+  amp: false
+  seeds: [0]
+
+extract:
+  batch_size: 16
+  precision: "float32"
+  position_rule: "last_token"
+  shard_size: 5000
+  cache_dir: "caches"
+
+losses:
+  - {type: answer_nll, w: 1.0}
