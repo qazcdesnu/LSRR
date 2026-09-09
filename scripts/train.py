@@ -69,17 +69,11 @@ def ensure_cached_data(cfg, split="train", device="cpu"):
         samples = dataset_mod.get_split(split)
         writer = ShardedHCacheWriter(cache_dir, shard_size=extract_cfg.get("shard_size", 5000), precision=precision)
 
+        from lsrr.utils.oom import process_batch_with_oom_recovery
         bs = extract_cfg.get("batch_size", 16)
         for i in range(0, len(samples), bs):
             chunk = samples[i:i+bs]
-            enc_q = extractor.tokenizer([s.question for s in chunk], padding=True, truncation=True, return_tensors="pt")
-            enc_a = extractor.tokenizer([s.answer for s in chunk], padding=True, truncation=True, return_tensors="pt")
-            with torch.no_grad():
-                H_batch = extractor.extract_hidden_states(enc_q["input_ids"], enc_q["attention_mask"], position_rule=pos_rule)
-            for b in range(len(chunk)):
-                ans_ids = enc_a["input_ids"][b]
-                ans_mask = enc_a["attention_mask"][b]
-                writer.add_sample(H_batch[b], target_ids=ans_ids[ans_mask == 1], meta=chunk[b].meta)
+            process_batch_with_oom_recovery(extractor, writer, chunk, position_rule=pos_rule)
         writer.finalize()
 
     return cache_dir, extractor.num_layers, extractor.hidden_dim

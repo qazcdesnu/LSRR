@@ -11,7 +11,7 @@ DEFAULT_CONFIG_DIR = Path(__file__).resolve().parent.parent / "configs"
 def _find_config_file(name: str, base_dir: Path) -> Path:
     """Resolve a config reference like 'base', 'backbone/gpt2', or direct file path to an actual .yaml path."""
     direct_p = Path(name)
-    if direct_p.exists():
+    if direct_p.exists() and direct_p.is_file():
         return direct_p.resolve()
 
     if not name.endswith(".yaml") and not name.endswith(".yml"):
@@ -20,7 +20,7 @@ def _find_config_file(name: str, base_dir: Path) -> Path:
         candidates = [base_dir / name]
 
     for candidate in candidates:
-        if candidate.exists():
+        if candidate.exists() and candidate.is_file():
             return candidate
 
     raise FileNotFoundError(f"Config '{name}' not found under {base_dir}. Looked for: {candidates}")
@@ -101,6 +101,24 @@ def load_config_with_cli(
     if overrides:
         cli_conf = OmegaConf.from_dotlist(overrides)
         base_conf = OmegaConf.merge(base_conf, cli_conf)
+
+    for section in ["backbone", "data", "decoder", "engine"]:
+        if section in base_conf and isinstance(base_conf[section], str):
+            c_name = base_conf[section]
+            try:
+                conf_file = _find_config_file(f"{section}/{c_name}", config_dir)
+                loaded_section = resolve_hierarchical_config(conf_file, config_dir)
+                if section in loaded_section:
+                    base_conf[section] = loaded_section[section]
+                else:
+                    base_conf[section] = loaded_section
+            except FileNotFoundError:
+                base_conf[section] = OmegaConf.create({"type": c_name})
+
+    if "split" in base_conf and isinstance(base_conf.split, str):
+        if "extract" not in base_conf:
+            base_conf.extract = OmegaConf.create({})
+        base_conf.extract.split = base_conf.split
 
     return base_conf
 

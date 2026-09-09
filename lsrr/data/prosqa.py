@@ -15,7 +15,12 @@ class ProsQADataset(BaseDataModule):
         seed: int = 42,
         **kwargs
     ):
-        self.data_path = Path(data_path) if data_path else None
+        p = Path(data_path) if data_path else None
+        if p and not p.is_absolute() and not p.exists():
+            repo_root = Path(__file__).resolve().parent.parent.parent
+            if (repo_root / p).exists():
+                p = repo_root / p
+        self.data_path = p
         self.num_mock_samples = num_mock_samples
         self.seed = seed
 
@@ -75,25 +80,56 @@ class ProsQADataset(BaseDataModule):
             self.splits[split] = samples
 
     def _load_from_path(self, path: Path):
-        # Support loading json / jsonl files
+        # Support loading directory with json / jsonl files, or a single file
         if path.is_dir():
-            for s in ["train", "val", "test"]:
-                fpath = path / f"{s}.jsonl"
-                if fpath.exists():
-                    self.splits[s] = self._read_file(fpath)
+            split_candidates = {
+                "train": ["train.json", "train.jsonl", "prosqa_train.json", "prosqa_train.jsonl"],
+                "val": ["val.json", "val.jsonl", "valid.json", "valid.jsonl", "prosqa_val.json", "prosqa_valid.json", "prosqa_val.jsonl", "prosqa_valid.jsonl"],
+                "test": ["test.json", "test.jsonl", "prosqa_test.json", "prosqa_test.jsonl"]
+            }
+            for split, filenames in split_candidates.items():
+                for fname in filenames:
+                    fpath = path / fname
+                    if fpath.exists():
+                        self.splits[split] = self._read_file(fpath)
+                        break
         elif path.is_file():
             self.splits["train"] = self._read_file(path)
 
     def _read_file(self, fpath: Path) -> List[DataSample]:
         samples = []
         with open(fpath, "r", encoding="utf-8") as f:
-            for idx, line in enumerate(f):
-                item = json.loads(line)
+            if fpath.suffix == ".json":
+                data = json.load(f)
+                if isinstance(data, list):
+                    raw_items = data
+                elif isinstance(data, dict):
+                    raw_items = data.get("data", data.get("samples", []))
+                else:
+                    raw_items = []
+            else:
+                raw_items = [json.loads(line) for line in f if line.strip()]
+
+            for idx, item in enumerate(raw_items):
+                cot_steps = item.get("steps", item.get("cot_steps", []))
+                meta = item.get("meta", {})
+                if not isinstance(meta, dict):
+                    meta = {}
+
+                if "hops" not in meta:
+                    meta["hops"] = len(cot_steps) if cot_steps else item.get("hops", 1)
+                if "sample_id" not in meta:
+                    meta["sample_id"] = idx
+
+                for key in ["idx_to_symbol", "edges", "root", "target", "neg_target"]:
+                    if key in item and key not in meta:
+                        meta[key] = item[key]
+
                 samples.append(DataSample(
                     question=item.get("question", item.get("text", "")),
                     answer=str(item.get("answer", item.get("label", ""))),
-                    cot_steps=item.get("cot_steps", []),
-                    meta=item.get("meta", {"hops": item.get("hops", 1), "sample_id": idx})
+                    cot_steps=cot_steps,
+                    meta=meta
                 ))
         return samples
 
@@ -108,10 +144,9 @@ class ProsQADataset(BaseDataModule):
 
         # Binary evaluation for True/False
         if target_norm in ["true", "false"]:
-            # Check for isolated word
             tokens = re.findall(r"\b(true|false)\b", pred_norm)
             if tokens:
                 return tokens[-1] == target_norm
             return target_norm in pred_norm
 
-        return pred_norm == target_norm
+        return target_norm in pred_norm or pred_norm in target_norm

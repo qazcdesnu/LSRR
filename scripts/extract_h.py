@@ -14,6 +14,7 @@ sys.path.insert(0, str(repo_root))
 from lsrr.registry import BACKBONE_REGISTRY, DATA_REGISTRY
 from lsrr.data.cache import ShardedHCacheWriter, compute_cache_key
 from lsrr.config import load_config_with_cli
+from lsrr.utils.oom import process_batch_with_oom_recovery
 # Import data & backbone implementations to trigger registration
 import lsrr.data
 import lsrr.backbones
@@ -55,36 +56,7 @@ def extract_h():
     start_time = time.time()
     for i in tqdm(range(0, len(samples), batch_size), desc=f"Extracting H ({split})"):
         batch_samples = samples[i:i+batch_size]
-        questions = [s.question for s in batch_samples]
-        answers = [s.answer for s in batch_samples]
-
-        enc_q = extractor.tokenizer(
-            questions,
-            padding=True,
-            truncation=True,
-            return_tensors="pt"
-        )
-        enc_ans = extractor.tokenizer(
-            answers,
-            padding=True,
-            truncation=True,
-            return_tensors="pt"
-        )
-
-        with torch.no_grad():
-            H_batch = extractor.extract_hidden_states(
-                input_ids=enc_q["input_ids"],
-                attention_mask=enc_q["attention_mask"],
-                position_rule=position_rule
-            )  # [B, L, d]
-
-        for b in range(len(batch_samples)):
-            h_sample = H_batch[b]  # [L, d]
-            ans_ids = enc_ans["input_ids"][b]
-            # Strip padding from target_ids
-            ans_mask = enc_ans["attention_mask"][b]
-            clean_ans_ids = ans_ids[ans_mask == 1]
-            writer.add_sample(h_sample, target_ids=clean_ans_ids, meta=batch_samples[b].meta)
+        process_batch_with_oom_recovery(extractor, writer, batch_samples, position_rule=position_rule)
 
     manifest_path = writer.finalize(extra_meta={
         "backbone": OmegaConf.to_container(backbone_cfg, resolve=True),

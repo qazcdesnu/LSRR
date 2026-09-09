@@ -13,7 +13,7 @@ class HFCausalBackboneExtractor(BaseBackboneExtractor):
     def __init__(
         self,
         model_name_or_path: str = "gpt2",
-        torch_dtype: str = "float32",
+        dtype: str = "float32",
         device: Optional[str] = None,
         include_embedding: bool = False,
         **kwargs
@@ -26,7 +26,7 @@ class HFCausalBackboneExtractor(BaseBackboneExtractor):
         else:
             self.device = torch.device(device)
 
-        dtype = torch.bfloat16 if torch_dtype == "bfloat16" else (torch.float16 if torch_dtype == "float16" else torch.float32)
+        dtype = torch.bfloat16 if dtype == "bfloat16" else (torch.float16 if dtype == "float16" else torch.float32)
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         if self.tokenizer.pad_token is None:
@@ -34,7 +34,7 @@ class HFCausalBackboneExtractor(BaseBackboneExtractor):
 
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name_or_path,
-            torch_dtype=dtype
+            dtype=dtype
         ).to(self.device)
 
         # Strictly freeze backbone: [결정 D-1]

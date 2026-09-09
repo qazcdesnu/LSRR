@@ -2,5 +2,5 @@ backbone:
   type: hf_causal
   name: gpt2
   model_name_or_path: gpt2
-  torch_dtype: float32
+  dtype: float32
   include_embedding: false

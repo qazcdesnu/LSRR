@@ -1,5 +1,6 @@
 from typing import Dict, Any, Type, Callable
 import inspect
+from omegaconf import DictConfig, OmegaConf
 
 class Registry:
     """A generic modular registry for extensible components."""
@@ -24,13 +25,23 @@ class Registry:
 
     def build(self, cfg: Any, **kwargs) -> Any:
         """Build an instance from a dict or OmegaConf DictConfig with 'type' key."""
-        from omegaconf import DictConfig, OmegaConf
-        if isinstance(cfg, DictConfig):
+        if isinstance(cfg, str):
+            from lsrr.config import _find_config_file, DEFAULT_CONFIG_DIR, resolve_hierarchical_config
+            try:
+                conf_file = _find_config_file(f"{self._name}/{cfg}", DEFAULT_CONFIG_DIR)
+                sub_cfg = resolve_hierarchical_config(conf_file)
+                if self._name in sub_cfg:
+                    cfg_dict = OmegaConf.to_container(sub_cfg[self._name], resolve=True)
+                else:
+                    cfg_dict = OmegaConf.to_container(sub_cfg, resolve=True)
+            except FileNotFoundError:
+                cfg_dict = {"type": cfg}
+        elif isinstance(cfg, DictConfig):
             cfg_dict = OmegaConf.to_container(cfg, resolve=True)
         elif isinstance(cfg, dict):
             cfg_dict = dict(cfg)
         else:
-            raise TypeError(f"Expected dict or DictConfig for build, got {type(cfg)}")
+            raise TypeError(f"Expected str, dict, or DictConfig for build, got {type(cfg)}")
 
         if "type" not in cfg_dict:
             raise KeyError(f"Configuration must contain 'type' field to build from {self._name} registry. Got: {cfg_dict}")
