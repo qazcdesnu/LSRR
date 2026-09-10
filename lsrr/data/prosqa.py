@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from lsrr.interfaces import BaseDataModule, DataSample
 from lsrr.registry import DATA_REGISTRY
+from lsrr.data.answer_scoring import match_boolean, match_free_form, normalize_text
 
 @DATA_REGISTRY.register("prosqa")
 class ProsQADataset(BaseDataModule):
@@ -139,14 +140,13 @@ class ProsQADataset(BaseDataModule):
         return self.splits[split]
 
     def evaluate_answer(self, prediction: str, target: str, meta: Dict[str, Any]) -> bool:
-        pred_norm = prediction.strip().lower()
-        target_norm = target.strip().lower()
+        """Final-answer exact match.
 
-        # Binary evaluation for True/False
-        if target_norm in ["true", "false"]:
-            tokens = re.findall(r"\b(true|false)\b", pred_norm)
-            if tokens:
-                return tokens[-1] == target_norm
-            return target_norm in pred_norm
-
-        return target_norm in pred_norm or pred_norm in target_norm
+        Synthetic True/False items are decided by the last true/false token. Real ProsQA
+        answers are sentences ("Sally is a sterpus."), decided by normalized equality or
+        by the final entity. Substring containment is NOT accepted: it scored an empty
+        generation, "sally" and "is a" as correct.
+        """
+        if normalize_text(target) in ("true", "false"):
+            return match_boolean(prediction, target)
+        return match_free_form(prediction, target)

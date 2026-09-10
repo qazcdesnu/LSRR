@@ -25,6 +25,7 @@ def collate_h_cache(batch):
     H = torch.stack([item["H"] for item in batch], dim=0)
     
     # Pad target_ids to maximum length in batch
+    target_lens = torch.tensor([item["target_ids"].size(0) for item in batch], dtype=torch.long)
     max_target_len = max((item["target_ids"].size(0) for item in batch), default=0)
     target_ids = torch.full((len(batch), max_target_len), fill_value=0, dtype=torch.long)
     for i, item in enumerate(batch):
@@ -36,8 +37,46 @@ def collate_h_cache(batch):
     return {
         "H": H,
         "target_ids": target_ids,
+        "target_lens": target_lens,
         "meta": metas
     }
+
+def find_resume_checkpoint(cfg, exp_name: str, base_runs_dir: Path = Path("runs")):
+    """Locate checkpoint file and run_id if resume or resume_from is configured."""
+    resume_from = cfg.get("resume_from", None)
+    resume_flag = cfg.get("resume", False)
+
+    if resume_from:
+        p = Path(resume_from)
+        if p.is_file():
+            return p, p.parent.name
+        elif p.is_dir():
+            cand = p / "checkpoint_last.pt"
+            if not cand.exists():
+                cand = p / "best_model.pt"
+            if cand.exists():
+                return cand, p.name
+            raise FileNotFoundError(f"No checkpoint found in directory: {p}")
+        else:
+            raise FileNotFoundError(f"resume_from path does not exist: {p}")
+
+    if resume_flag:
+        if not base_runs_dir.exists():
+            print(f"[Train] No runs directory found at {base_runs_dir} to resume from.")
+            return None
+        matching_dirs = sorted([
+            d for d in base_runs_dir.iterdir()
+            if d.is_dir() and d.name.startswith(exp_name) and (d / "checkpoint_last.pt").exists()
+        ], key=lambda d: d.stat().st_mtime)
+
+        if matching_dirs:
+            latest_dir = matching_dirs[-1]
+            return latest_dir / "checkpoint_last.pt", latest_dir.name
+        else:
+            print(f"[Train] No existing run matching '{exp_name}' with checkpoint_last.pt found. Starting fresh.")
+            return None
+
+    return None
 
 def ensure_cached_data(cfg, split="train", device="cpu"):
     """Check if cache exists, if not extract on the fly."""
@@ -58,6 +97,13 @@ def ensure_cached_data(cfg, split="train", device="cpu"):
 
     cache_dir = base_cache_dir / b_id / f"{d_id}_{split}_{cache_key}"
     if not (cache_dir / "manifest.json").exists():
+        # Check if an existing valid cache matching {d_id}_{split}_* exists
+        existing = sorted([p for p in (base_cache_dir / b_id).glob(f"{d_id}_{split}_*") if (p / "manifest.json").exists()])
+        if existing:
+            cache_dir = existing[-1]
+            print(f"[Train] Found existing cache for split '{split}' at {cache_dir}")
+            return cache_dir, extractor.num_layers, extractor.hidden_dim
+
         print(f"[Train] Cache not found at {cache_dir}. Extracting H for split '{split}'...")
         from scripts.extract_h import extract_h
         extract_cfg_copy = OmegaConf.create(dict(cfg))
@@ -80,7 +126,16 @@ def ensure_cached_data(cfg, split="train", device="cpu"):
 
 def run_single_seed(cfg, seed: int, exp_name: str, device: torch.device):
     set_seed(seed, cfg.get("deterministic", True))
-    tracker = ExperimentTracker(exp_name=exp_name, cfg=cfg, seed=seed)
+
+    resume_info = find_resume_checkpoint(cfg, exp_name)
+    resume_checkpoint = None
+    run_id = None
+    if resume_info is not None:
+        ckpt_path, run_id = resume_info
+        print(f"[Train] Loading resume checkpoint from: {ckpt_path} (Run ID: {run_id})")
+        resume_checkpoint = torch.load(ckpt_path, map_location=device)
+
+    tracker = ExperimentTracker(exp_name=exp_name, cfg=cfg, seed=seed, run_id=run_id)
 
     # 1. Prepare data loaders from cache
     train_cache_dir, num_layers, hidden_dim = ensure_cached_data(cfg, split="train", device=device)
@@ -110,6 +165,11 @@ def run_single_seed(cfg, seed: int, exp_name: str, device: torch.device):
     loss_fn = CompositeLoss(losses_cfg)
 
     # 4. Train
+    backbone_cfg = cfg.get("backbone", {"type": "gpt2", "model_name_or_path": "gpt2"})
+    extractor = BACKBONE_REGISTRY.build(backbone_cfg, device="cpu")
+    data_cfg = cfg.get("data", {"type": "prosqa"})
+    dataset_mod = DATA_REGISTRY.build(data_cfg)
+
     trainer = Trainer(
         model=model,
         train_loader=train_loader,
@@ -117,10 +177,14 @@ def run_single_seed(cfg, seed: int, exp_name: str, device: torch.device):
         loss_fn=loss_fn,
         cfg=cfg,
         tracker=tracker,
-        device=device
+        device=device,
+        resume_checkpoint=resume_checkpoint,
+        tokenizer=extractor.tokenizer,
+        dataset_mod=dataset_mod
     )
     summary = trainer.fit()
     return summary
+
 
 def main():
     cfg = load_config_with_cli()

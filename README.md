@@ -44,6 +44,37 @@ uv pip install -e .
 
 ---
 
+## Datasets
+
+The datasets are not committed to this repository (131 MB combined). Fetch them with:
+
+```bash
+python scripts/download_data.py
+```
+
+This writes `data/prosqa/` and `data/gsm8k-aug/` and verifies every file against a
+recorded SHA-256. Useful flags:
+
+```bash
+python scripts/download_data.py --dataset prosqa   # one dataset only
+python scripts/download_data.py --check            # verify what is on disk, download nothing
+python scripts/download_data.py --force            # re-download and overwrite
+```
+
+| Dataset | Split sizes | Source |
+| :--- | :--- | :--- |
+| ProsQA | train 17,886 / valid 300 / test 500 | [facebookresearch/coconut](https://github.com/facebookresearch/coconut), used as published |
+| GSM8K-Aug | train 385,620 / valid 500 / test 1,319 | [da03/Internalize_CoT_Step_by_Step](https://github.com/da03/Internalize_CoT_Step_by_Step), converted to the Coconut JSON schema |
+
+Both are pinned to upstream commits, and the GSM8K-Aug conversion applies the same
+transform as coconut's `preprocessing/gsm_icot.py`, so the result is byte-for-byte
+identical to the published files. `data/` is gitignored; re-run the script on a fresh
+clone before extracting hidden states.
+
+The synthetic `multiplication` dataset needs no download — it is generated from a seed.
+
+---
+
 ## Running Experiments
 
 ### 1. Extract Hidden States Cache
@@ -73,8 +104,14 @@ python scripts/sweep.py exp=ablation_C_direction
 ### 4. Evaluation and Pareto Sweep
 Evaluate a checkpoint under different termination rules ($\Delta < \varepsilon$ thresholds):
 ```bash
-python scripts/eval.py run_dir=runs/<run_id>
+python scripts/eval.py run_dir=runs/<run_id>            # held-out test split (default)
+python scripts/eval.py run_dir=runs/<run_id> eval.split=val
 ```
+
+Accuracy is final-answer exact match after greedy decoding, matching the protocol of the
+latent-reasoning baselines. Reported latency and FLOPs include the single frozen-backbone
+forward pass; when that pass cannot be measured the result is flagged with
+`flops_includes_backbone: false` rather than silently under-reported.
 
 ### 5. Generate Paper Tables
 Merge local runs index (`runs/runs_index.csv`) with published baselines (`configs/published_numbers.yaml`):

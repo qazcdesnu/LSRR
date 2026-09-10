@@ -6,12 +6,10 @@ adapter:
 
 fusion:
   type: attention_pooling
-  d_model: 512
   fusion_type: residual
 
 engine:
   type: hydra_qs
-  d_model: 512
   d_state: 16
   n_blocks: 2
   damping_alpha: 0.5
@@ -34,6 +32,8 @@ losses:
 
 train:
   lr: 3.0e-4
-  epochs: 5
+  min_lr: 1.0e-5
+  warmup_ratio: 0.1
+  epochs: 40
   bs: 16
   seeds: [0]

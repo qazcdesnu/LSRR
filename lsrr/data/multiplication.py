@@ -3,6 +3,7 @@ import re
 from typing import List, Dict, Any
 from lsrr.interfaces import BaseDataModule, DataSample
 from lsrr.registry import DATA_REGISTRY
+from lsrr.data.answer_scoring import match_final_number
 
 @DATA_REGISTRY.register("multiplication")
 class MultiplicationDataset(BaseDataModule):
@@ -63,12 +64,5 @@ class MultiplicationDataset(BaseDataModule):
         return self.splits[split]
 
     def evaluate_answer(self, prediction: str, target: str, meta: Dict[str, Any]) -> bool:
-        """Extract number from prediction and compare with target integer."""
-        # Clean target
-        target_clean = target.strip()
-        # Find all numbers in prediction
-        pred_nums = re.findall(r"\b\d+\b", prediction.strip())
-        if not pred_nums:
-            return False
-        # Match against either the first number or the last number (standard format is often final token)
-        return target_clean in pred_nums or pred_nums[-1] == target_clean
+        """Final-answer exact match: only the last number the model emits counts."""
+        return match_final_number(prediction, target)

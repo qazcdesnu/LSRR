@@ -12,7 +12,7 @@ class AttentionBlockCore(nn.Module):
     """
     def __init__(
         self,
-        d_model: int = 512,
+        d_model: int = 768,
         n_heads: int = 8,
         d_ffn: Optional[int] = None,
         dropout: float = 0.0,
@@ -21,13 +21,9 @@ class AttentionBlockCore(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.n_heads = n_heads
-        # Default d_ffn to match ~5.8M params if d_model=512
-        if d_ffn is None:
-            # For d_model=512, hydra_qs core has ~5.87M params.
-            # QKVO = 4 * 512^2 = 1,048,576. Remaining ~4.82M / (2 * 512) ≈ 4700.
-            self.d_ffn = 4710
-        else:
-            self.d_ffn = d_ffn
+        # Plain transformer default. Parameter matching against HydraQS is done by
+        # AttentionBlockEngine, which solves for d_ffn and passes it in explicitly.
+        self.d_ffn = 4 * d_model if d_ffn is None else d_ffn
 
         self.norm1 = nn.LayerNorm(d_model)
         self.attn = nn.MultiheadAttention(
@@ -61,7 +57,7 @@ class AttentionBlockEngine(BaseRefinementEngine):
     """Parameter-matched Attention Block Engine."""
     def __init__(
         self,
-        d_model: int = 512,
+        d_model: int = 768,
         n_heads: int = 8,
         d_ffn: Optional[int] = None,
         n_blocks: int = 2,
@@ -75,17 +71,20 @@ class AttentionBlockEngine(BaseRefinementEngine):
         self.d_model = d_model
         self.n_blocks = n_blocks
 
-        # If matching hydra_qs, compute exact d_ffn needed
+        # If matching hydra_qs, solve for the d_ffn that equalises the per-block budget.
+        # This is derived from d_model, so it tracks the backbone hidden size automatically.
         if match_hydra_params and d_ffn is None:
             # Target per-block core params of HydraQSCore
             from lsrr.engines.hydra_qs import HydraQSCore
-            dummy_hydra = HydraQSCore(d_model=d_model, **kwargs)
+            core_keys = {"d_state", "d_conv", "expand", "disable_backward"}
+            core_kwargs = {k: v for k, v in kwargs.items() if k in core_keys}
+            dummy_hydra = HydraQSCore(d_model=d_model, **core_kwargs)
             target_params = sum(p.numel() for p in dummy_hydra.parameters())
             # Attn has QKVO + norms = 4 * d_model^2 + 4 * d_model
             base_attn_params = 4 * (d_model ** 2) + 4 * d_model
             # FFN params = 2 * d_model * d_ffn + d_ffn + d_model
             # Solve for d_ffn: target_params = base_attn_params + (2 * d_model + 1) * d_ffn + d_model
-            d_ffn = int((target_params - base_attn_params - d_model) / (2 * d_model + 1))
+            d_ffn = max(1, int((target_params - base_attn_params - d_model) / (2 * d_model + 1)))
 
         layers = [
             AttentionBlockCore(d_model=d_model, n_heads=n_heads, d_ffn=d_ffn)

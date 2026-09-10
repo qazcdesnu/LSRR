@@ -10,7 +10,7 @@ class DirectionalSSMCore(nn.Module):
     """Directional SSM Core with direction: 'up' (forward), 'down' (reverse), or 'bidir_add'."""
     def __init__(
         self,
-        d_model: int = 512,
+        d_model: int = 768,
         d_state: int = 16,
         d_conv: int = 4,
         expand: int = 2,
@@ -84,7 +84,7 @@ class BaseDirectionalEngine(BaseRefinementEngine):
     def __init__(
         self,
         direction: str,
-        d_model: int = 512,
+        d_model: int = 768,
         d_state: int = 16,
         n_blocks: int = 2,
         damping_alpha: float = 0.5,

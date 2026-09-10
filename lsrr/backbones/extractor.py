@@ -54,7 +54,7 @@ class HFCausalBackboneExtractor(BaseBackboneExtractor):
         return self._hidden_dim
 
     def get_tokenizer_hash(self) -> str:
-        vocab_keys = list(self.tokenizer.get_vocab().keys())[:100]
+        vocab_keys = sorted(self.tokenizer.get_vocab().keys())[:100]
         return hashlib.sha256("".join(vocab_keys).encode("utf-8")).hexdigest()[:12]
 
     def extract_hidden_states(

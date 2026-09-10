@@ -106,7 +106,10 @@ class BaseFusionHead(nn.Module, ABC):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Args:
             R_star: [B, L, d_model] final refined state
-            h_orig_L: Optional [B, d_model or d_in] context representation from original layer L
+            h_orig_L: [B, d_model] context representation of the original layer L, i.e.
+                the adapter output R0[:, -1, :]. Implementations of the proposal 3.4
+                residual `h_fusion = h^(L) + W_r * h_ssm` require it; it stays Optional in
+                the signature only so alternative heads may ignore it.
         Returns:
             h_fusion: [B, d_fusion]
             alpha_weights: [B, L] pooling attention weights across layers

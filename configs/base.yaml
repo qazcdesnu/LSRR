@@ -1,4 +1,10 @@
 # Base configuration
+#
+# Reasoning width: d_model is NOT set here. It defaults to the backbone hidden size
+# (d_in) so that no dimension reduction sits between the backbone context representation
+# and the reasoning state, which is what lets proposal 3.4 fuse
+#   h_fusion = h_orig_L + W_r * h_ssm
+# with h_orig_L = R0[:, -1, :] directly. Set `adapter.d_model` to override.
 seed: 42
 deterministic: true
 
@@ -11,6 +17,8 @@ train:
   weight_decay: 1.0e-2
   grad_clip: 1.0
   amp: false
+  warmup_ratio: 0.1
+  min_lr: 1.0e-5
   seeds: [0]
 
 extract:

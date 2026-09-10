@@ -3,9 +3,12 @@ from lsrr.engines.hydra_qs import HydraQSEngine
 from lsrr.engines.attn_block import AttentionBlockEngine
 from lsrr.utils.flops import count_parameters
 
-def test_param_matching_attn_and_hydra():
-    """Test 6: Parameter count difference between AttentionBlock and HydraQS is < 5%."""
-    d_model = 512
+@pytest.mark.parametrize("d_model", [512, 768])
+def test_param_matching_attn_and_hydra(d_model):
+    """Test 6: Parameter count difference between AttentionBlock and HydraQS is < 5%.
+
+    Checked at 768 too, the width the model now inherits from a GPT-2 backbone.
+    """
     n_blocks = 2
 
     hydra = HydraQSEngine(d_model=d_model, n_blocks=n_blocks)

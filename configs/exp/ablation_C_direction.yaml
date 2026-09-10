@@ -6,12 +6,10 @@ adapter:
 
 fusion:
   type: attention_pooling
-  d_model: 512
   fusion_type: residual
 
 engine:
   type: hydra_qs
-  d_model: 512
   d_state: 16
   n_blocks: 2
   damping_alpha: 0.5

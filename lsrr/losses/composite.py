@@ -44,6 +44,11 @@ class DeepSupervisionLoss(BaseLoss):
         fusion_head = model_outputs["fusion_head"]
         decoder = model_outputs["decoder"]
         targets = batch["target_ids"]
+        # Intermediate cycles must be fused against the same 3.4 context residual as
+        # the final state, otherwise deep supervision optimises a different head.
+        h_orig_L = model_outputs.get("h_orig_L")
+        if h_orig_L is None:
+            h_orig_L = model_outputs["R0"][:, -1, :]
 
         # Sample intermediate states (excluding 0 and final)
         candidates = intermediate_states[1:-1] if len(intermediate_states) > 2 else intermediate_states[:-1]
@@ -57,7 +62,7 @@ class DeepSupervisionLoss(BaseLoss):
 
         total_loss = 0.0
         for state in chosen:
-            h_f, _ = fusion_head(state)
+            h_f, _ = fusion_head(state, h_orig_L=h_orig_L)
             inter_logits = decoder(h_f, targets)
             min_len = min(inter_logits.size(1), targets.size(1))
             step_loss = self.loss_fn(

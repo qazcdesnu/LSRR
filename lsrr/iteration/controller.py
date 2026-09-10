@@ -75,9 +75,13 @@ class IterationController:
         R0: torch.Tensor,
         termination_rule: Optional[BaseTerminationRule] = None,
         fusion_head: Optional[nn.Module] = None,
-        decoder: Optional[nn.Module] = None
+        decoder: Optional[nn.Module] = None,
+        h_orig_L: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, List[StepDiagnostics], torch.Tensor]:
         """Evaluation pass with autonomous convergence termination.
+        Args:
+            h_orig_L: [B, d_model] context residual R0[:, -1, :], required when a
+                logits-based termination rule needs the fusion head (proposal 3.4).
         Returns:
             R_star: [B, L, d] final state
             diagnostics: List of StepDiagnostics
@@ -107,7 +111,8 @@ class IterationController:
                 # If rule needs output logits
                 logits_current = None
                 if decoder is not None and fusion_head is not None:
-                    h_fusion, _ = fusion_head(R_next)
+                    ctx = h_orig_L if h_orig_L is not None else R0[:, -1, :]
+                    h_fusion, _ = fusion_head(R_next, h_orig_L=ctx)
                     logits_current = decoder(h_fusion)
 
                 if rule is not None:

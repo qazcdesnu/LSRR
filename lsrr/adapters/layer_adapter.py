@@ -36,7 +36,7 @@ class PerLayerAffineAdapter(BaseLayerAdapter):
     def __init__(
         self,
         d_in: int,
-        d_model: int = 512,
+        d_model: int = 768,
         num_layers: int = 12,
         layer_pos_emb: bool = True,
         use_rmsnorm: bool = True,
@@ -88,7 +88,7 @@ class SharedAffineAdapter(BaseLayerAdapter):
     def __init__(
         self,
         d_in: int,
-        d_model: int = 512,
+        d_model: int = 768,
         num_layers: int = 12,
         layer_pos_emb: bool = True,
         **kwargs

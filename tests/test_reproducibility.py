@@ -38,9 +38,9 @@ def run_experiment(seed: int, tmp_path: Path):
 
     model = LSRRModel(
         adapter_cfg={"type": "per_layer_affine+rmsnorm"},
-        engine_cfg={"type": "mamba_up", "d_model": 32, "n_blocks": 1},
-        fusion_cfg={"type": "attention_pooling", "d_model": 32},
-        decoder_cfg={"type": "trained_light_decoder", "d_model": 32, "vocab_size": 100, "n_layers": 1, "n_heads": 2},
+        engine_cfg={"type": "mamba_up", "n_blocks": 1},
+        fusion_cfg={"type": "attention_pooling"},
+        decoder_cfg={"type": "trained_light_decoder", "vocab_size": 100, "n_layers": 1, "n_heads": 2},
         d_in=32,
         num_layers=8
     )

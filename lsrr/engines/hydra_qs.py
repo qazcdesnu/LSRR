@@ -13,7 +13,7 @@ class HydraQSCore(nn.Module):
     """
     def __init__(
         self,
-        d_model: int = 512,
+        d_model: int = 768,
         d_state: int = 16,
         d_conv: int = 4,
         expand: int = 2,
@@ -101,7 +101,7 @@ class HydraQSCore(nn.Module):
 class HydraQSEngine(BaseRefinementEngine):
     def __init__(
         self,
-        d_model: int = 512,
+        d_model: int = 768,
         d_state: int = 16,
         n_blocks: int = 2,
         damping_alpha: float = 0.5,

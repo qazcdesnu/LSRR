@@ -44,7 +44,11 @@ def process_batch_with_oom_recovery(
             ans_ids = enc_ans["input_ids"][b]
             ans_mask = enc_ans["attention_mask"][b]
             clean_ans_ids = ans_ids[ans_mask == 1]
-            writer.add_sample(h_sample, target_ids=clean_ans_ids, meta=samples_chunk[b].meta)
+            # Record the gold answer alongside the sample meta. Evaluation reads it from
+            # here; without it the scorer silently compares against an empty string.
+            sample_meta = dict(samples_chunk[b].meta or {})
+            sample_meta["answer"] = samples_chunk[b].answer
+            writer.add_sample(h_sample, target_ids=clean_ans_ids, meta=sample_meta)
 
     except Exception as e:
         err_msg = str(e).lower()

@@ -17,10 +17,26 @@ from lsrr.registry import BACKBONE_REGISTRY, DATA_REGISTRY
 import lsrr.data
 import lsrr.backbones
 
+
 def collate_h_cache(batch):
+    """Keep target_ids: the evaluator needs the gold answer for every sample.
+
+    Older caches predate `meta["answer"]`, so target_ids is the fallback the scorer
+    falls back to. Dropping it here is what made evaluation score against "".
+    """
     H = torch.stack([item["H"] for item in batch], dim=0)
+
+    target_lens = torch.tensor([item["target_ids"].size(0) for item in batch], dtype=torch.long)
+    max_target_len = max((item["target_ids"].size(0) for item in batch), default=0)
+    target_ids = torch.zeros((len(batch), max_target_len), dtype=torch.long)
+    for i, item in enumerate(batch):
+        t_len = item["target_ids"].size(0)
+        if t_len > 0:
+            target_ids[i, :t_len] = item["target_ids"]
+
     metas = [item["meta"] for item in batch]
-    return {"H": H, "meta": metas}
+    return {"H": H, "target_ids": target_ids, "target_lens": target_lens, "meta": metas}
+
 
 def main():
     cfg = load_config_with_cli()
@@ -33,8 +49,12 @@ def main():
     else:
         run_cfg = cfg
 
+    # Held-out split. The baselines this work compares against report test-set accuracy,
+    # so `test` is the default; override with `eval.split=val` for development runs.
+    split = cfg.get("eval", {}).get("split", None) or run_cfg.get("eval", {}).get("split", "test")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"[Eval] Using device: {device}")
+    print(f"[Eval] Using device: {device} | split: {split}")
 
     # Load backbone extractor for tokenizer
     backbone_cfg = run_cfg.get("backbone", {"type": "gpt2", "model_name_or_path": "gpt2"})
@@ -43,9 +63,11 @@ def main():
     # Load dataset module
     data_cfg = run_cfg.get("data", {"type": "multiplication", "digits": 4})
     dataset_mod = DATA_REGISTRY.build(data_cfg)
+    eval_samples = dataset_mod.get_split(split)
+    print(f"[Eval] Split '{split}' has {len(eval_samples)} samples.")
 
-    # Build model
-    d_model = run_cfg.get("engine", {}).get("d_model", 512)
+    # Build model. The reasoning width is resolved inside LSRRModel from the backbone
+    # hidden size, so read it back off the model rather than guessing from the config.
     model = LSRRModel(
         adapter_cfg=run_cfg.get("adapter", {"type": "per_layer_affine+rmsnorm"}),
         engine_cfg=run_cfg.get("engine", {"type": "mamba_up"}),
@@ -66,9 +88,9 @@ def main():
 
     # Prepare evaluation data
     from scripts.train import ensure_cached_data
-    val_cache_dir, _, _ = ensure_cached_data(run_cfg, split="val", device=device)
-    val_ds = ShardedHCacheDataset(val_cache_dir)
-    val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, collate_fn=collate_h_cache)
+    eval_cache_dir, _, _ = ensure_cached_data(run_cfg, split=split, device=device)
+    eval_ds = ShardedHCacheDataset(eval_cache_dir)
+    eval_loader = DataLoader(eval_ds, batch_size=16, shuffle=False, collate_fn=collate_h_cache)
 
     evaluator = Evaluator(
         model=model,
@@ -76,13 +98,22 @@ def main():
         tokenizer=extractor.tokenizer,
         device=device,
         engine_name=run_cfg.get("engine", {}).get("type", "mamba_up"),
-        d_model=d_model,
+        d_model=model.d_model,
         num_engine_layers=run_cfg.get("engine", {}).get("n_blocks", 2),
-        num_model_layers=extractor.num_layers
+        num_model_layers=extractor.num_layers,
+        # Supplying these lets the evaluator measure and charge the one backbone forward
+        # pass, which is the cost the efficiency claim is about.
+        extractor=extractor,
+        eval_samples=eval_samples,
     )
 
+    print("\n[Eval] Measuring frozen-backbone forward cost...")
+    backbone_cost = evaluator.measure_backbone_cost()
+    for k, v in backbone_cost.items():
+        print(f"  {k}: {v}")
+
     # 1. Base evaluation
-    base_res = evaluator.evaluate_rule(val_loader)
+    base_res = evaluator.evaluate_rule(eval_loader)
     print("\n--- Base Evaluation Result ---")
     for k, v in base_res.items():
         print(f"{k}: {v}")
@@ -98,13 +129,29 @@ def main():
         {"type": "fixed_m", "m": 4, "m_max": 32},
         {"type": "fixed_m", "m": 8, "m_max": 32},
     ]
-    pareto_data = evaluator.sweep_termination_rules(val_loader, sweep_rules)
+    pareto_data = evaluator.sweep_termination_rules(eval_loader, sweep_rules)
 
     # Save Pareto results
     out_pareto = run_dir / "pareto_sweep.json"
     with open(out_pareto, "w", encoding="utf-8") as f:
         json.dump(pareto_data, f, indent=2)
     print(f"\n[Eval] Pareto sweep saved to {out_pareto}")
+
+    # Save headline results so make_tables.py can report accuracy, not just val loss.
+    out_results = run_dir / "eval_results.json"
+    with open(out_results, "w", encoding="utf-8") as f:
+        json.dump({
+            "run_id": run_dir.name,
+            "split": split,
+            "num_samples": len(eval_samples),
+            "dataset": run_cfg.get("data", {}).get("name", "unknown"),
+            "engine": run_cfg.get("engine", {}).get("type", "unknown"),
+            "backbone": run_cfg.get("backbone", {}).get("name", "unknown"),
+            "backbone_cost": backbone_cost,
+            "base": base_res,
+        }, f, indent=2)
+    print(f"[Eval] Results saved to {out_results}")
+
 
 if __name__ == "__main__":
     main()

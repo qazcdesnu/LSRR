@@ -25,10 +25,10 @@ def test_backbone_strictly_frozen():
 
     # Create LSRR model
     model = LSRRModel(
-        adapter_cfg={"type": "per_layer_affine+rmsnorm"},
-        engine_cfg={"type": "mamba_up", "d_model": 64, "n_blocks": 1},
-        fusion_cfg={"type": "attention_pooling", "d_model": 64},
-        decoder_cfg={"type": "trained_light_decoder", "d_model": 64, "n_layers": 1, "n_heads": 2},
+        adapter_cfg={"type": "per_layer_affine+rmsnorm", "d_model": 64},
+        engine_cfg={"type": "mamba_up", "n_blocks": 1},
+        fusion_cfg={"type": "attention_pooling"},
+        decoder_cfg={"type": "trained_light_decoder", "n_layers": 1, "n_heads": 2},
         d_in=extractor.hidden_dim,
         num_layers=extractor.num_layers
     ).to(device)

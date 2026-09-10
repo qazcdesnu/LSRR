@@ -14,13 +14,13 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# NOTE: anchored to the repo root. Unanchored `lib/` would also ignore any nested
+# source directory named lib (e.g. lsrr/lib/).
+/lib/
+/lib64/
 parts/
 sdist/
-var/
 wheels/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
@@ -35,13 +35,16 @@ env.bak/
 venv.bak/
 .uv/
 
-# Pytest & Coverage
+# Pytest, Coverage, linters & type checkers
 .pytest_cache/
 .coverage
 .coverage.*
 htmlcov/
 .tox/
 .nox/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
 
 # LSRR large data & caches & runs
 caches/
@@ -50,6 +53,11 @@ runs/
 *.pt
 *.bin
 *.ckpt
+
+# Datasets (131 MB): public, and reproduced byte-for-byte by
+#   python scripts/download_data.py
+# Anchored to the repo root so a `data/` directory inside a package is unaffected.
+/data/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
@@ -72,3 +80,10 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Numpy artifacts from analysis scripts
+*.npy
+*.npz
+
+# Claude Code: share project settings, keep local overrides out
+.claude/settings.local.json

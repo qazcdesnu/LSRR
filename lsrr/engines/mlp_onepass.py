@@ -8,7 +8,7 @@ class MLPOnePassEngine(BaseRefinementEngine):
     """1-pass MLP baseline (ablation for recurrence, used with M=1)."""
     def __init__(
         self,
-        d_model: int = 512,
+        d_model: int = 768,
         expand: int = 4,
         dropout: float = 0.0,
         **kwargs

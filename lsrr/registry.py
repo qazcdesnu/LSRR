@@ -66,6 +66,9 @@ class Registry:
     def list_keys(self):
         return list(self._registry.keys())
 
+    def __contains__(self, key: str) -> bool:
+        return key in self._registry
+
 # Registries for all slots
 BACKBONE_REGISTRY = Registry("backbone")
 ADAPTER_REGISTRY = Registry("adapter")
