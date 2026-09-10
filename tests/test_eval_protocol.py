@@ -343,8 +343,12 @@ def test_eval_script_defaults_to_the_test_split():
     src = (REPO_ROOT / "scripts" / "eval.py").read_text()
     assert 'get("split", "test")' in src, "eval.py must default to the held-out test split"
     assert 'split="val"' not in src, "eval.py must not hardcode the val split"
-    # And it must keep target_ids so the scorer receives a gold answer.
-    assert "target_ids" in src
+    # And it must use the shared collate, which is what keeps target_ids (and therefore
+    # a gold answer) in the batch. Dropping them is what made eval score against "".
+    assert "collate_h_cache" in src
+    from lsrr.data.collate import collate_h_cache as canonical
+    import scripts.eval as ev
+    assert ev.collate_h_cache is canonical
 
 
 @pytest.mark.parametrize("split", ["train", "val", "test"])

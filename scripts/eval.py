@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import json
+from functools import partial
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
@@ -13,29 +14,10 @@ from lsrr.config import load_config_with_cli, resolve_hierarchical_config
 from lsrr.model import LSRRModel
 from lsrr.training.evaluator import Evaluator
 from lsrr.data.cache import ShardedHCacheDataset
+from lsrr.data.collate import collate_h_cache
 from lsrr.registry import BACKBONE_REGISTRY, DATA_REGISTRY
 import lsrr.data
 import lsrr.backbones
-
-
-def collate_h_cache(batch):
-    """Keep target_ids: the evaluator needs the gold answer for every sample.
-
-    Older caches predate `meta["answer"]`, so target_ids is the fallback the scorer
-    falls back to. Dropping it here is what made evaluation score against "".
-    """
-    H = torch.stack([item["H"] for item in batch], dim=0)
-
-    target_lens = torch.tensor([item["target_ids"].size(0) for item in batch], dtype=torch.long)
-    max_target_len = max((item["target_ids"].size(0) for item in batch), default=0)
-    target_ids = torch.zeros((len(batch), max_target_len), dtype=torch.long)
-    for i, item in enumerate(batch):
-        t_len = item["target_ids"].size(0)
-        if t_len > 0:
-            target_ids[i, :t_len] = item["target_ids"]
-
-    metas = [item["meta"] for item in batch]
-    return {"H": H, "target_ids": target_ids, "target_lens": target_lens, "meta": metas}
 
 
 def main():
@@ -90,7 +72,10 @@ def main():
     from scripts.train import ensure_cached_data
     eval_cache_dir, _, _ = ensure_cached_data(run_cfg, split=split, device=device)
     eval_ds = ShardedHCacheDataset(eval_cache_dir)
-    eval_loader = DataLoader(eval_ds, batch_size=16, shuffle=False, collate_fn=collate_h_cache)
+    eval_loader = DataLoader(
+        eval_ds, batch_size=16, shuffle=False,
+        collate_fn=partial(collate_h_cache, eos_token_id=extractor.tokenizer.eos_token_id),
+    )
 
     evaluator = Evaluator(
         model=model,

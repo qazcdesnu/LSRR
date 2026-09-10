@@ -194,6 +194,8 @@ class Trainer:
         for batch in pbar:
             H = batch["H"].to(self.device)
             target_ids = batch["target_ids"].to(self.device)
+            labels = batch.get("labels")
+            labels = labels.to(self.device) if labels is not None else target_ids
             target_lens = batch.get("target_lens")
             if target_lens is not None and isinstance(target_lens, torch.Tensor):
                 target_lens = target_lens.to(self.device)
@@ -202,7 +204,9 @@ class Trainer:
 
             with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
                 outputs = self.model(H, target_ids=target_ids, is_eval=False)
-                loss_dict = self.loss_fn(outputs, {"target_ids": target_ids})
+                # target_ids drives the decoder; labels carry IGNORE_INDEX on padding so
+                # the loss never supervises it.
+                loss_dict = self.loss_fn(outputs, {"target_ids": target_ids, "labels": labels})
                 loss = loss_dict["total_loss"]
 
             self.scaler.scale(loss).backward()
@@ -271,13 +275,15 @@ class Trainer:
             for batch in self.val_loader:
                 H = batch["H"].to(self.device)
                 target_ids = batch["target_ids"].to(self.device)
+                labels = batch.get("labels")
+                labels = labels.to(self.device) if labels is not None else target_ids
                 target_lens = batch.get("target_lens")
                 if target_lens is not None and isinstance(target_lens, torch.Tensor):
                     target_lens = target_lens.to(self.device)
 
                 # 1. Validation loss via shifted teacher-forcing (uncheated cross-entropy)
                 outputs = self.model(H, target_ids=target_ids, is_eval=True)
-                loss_dict = self.loss_fn(outputs, {"target_ids": target_ids})
+                loss_dict = self.loss_fn(outputs, {"target_ids": target_ids, "labels": labels})
                 total_loss += loss_dict["total_loss"].item()
                 step_count += 1
 

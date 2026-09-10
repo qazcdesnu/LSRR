@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import os
+from functools import partial
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
@@ -13,6 +14,7 @@ from lsrr.config import load_config_with_cli
 from lsrr.utils.seed import set_seed
 from lsrr.utils.logging import ExperimentTracker
 from lsrr.data.cache import ShardedHCacheDataset, compute_cache_key
+from lsrr.data.collate import collate_h_cache
 from lsrr.data.schema import StandardDataBatch
 from lsrr.losses.composite import CompositeLoss
 from lsrr.model import LSRRModel
@@ -20,26 +22,6 @@ from lsrr.training.trainer import Trainer
 from lsrr.registry import BACKBONE_REGISTRY, DATA_REGISTRY
 import lsrr.data
 import lsrr.backbones
-
-def collate_h_cache(batch):
-    H = torch.stack([item["H"] for item in batch], dim=0)
-    
-    # Pad target_ids to maximum length in batch
-    target_lens = torch.tensor([item["target_ids"].size(0) for item in batch], dtype=torch.long)
-    max_target_len = max((item["target_ids"].size(0) for item in batch), default=0)
-    target_ids = torch.full((len(batch), max_target_len), fill_value=0, dtype=torch.long)
-    for i, item in enumerate(batch):
-        t_len = item["target_ids"].size(0)
-        if t_len > 0:
-            target_ids[i, :t_len] = item["target_ids"]
-            
-    metas = [item["meta"] for item in batch]
-    return {
-        "H": H,
-        "target_ids": target_ids,
-        "target_lens": target_lens,
-        "meta": metas
-    }
 
 def find_resume_checkpoint(cfg, exp_name: str, base_runs_dir: Path = Path("runs")):
     """Locate checkpoint file and run_id if resume or resume_from is configured."""
@@ -145,8 +127,14 @@ def run_single_seed(cfg, seed: int, exp_name: str, device: torch.device):
     val_ds = ShardedHCacheDataset(val_cache_dir)
 
     batch_size = cfg.get("train", {}).get("bs", 16)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_h_cache)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_h_cache)
+    # Bind the tokenizer's EOS so every target terminates, including targets read from
+    # caches extracted before the extractor started appending it.
+    backbone_cfg_for_tok = cfg.get("backbone", {"type": "gpt2", "model_name_or_path": "gpt2"})
+    tok = BACKBONE_REGISTRY.build(backbone_cfg_for_tok, device="cpu").tokenizer
+    collate = partial(collate_h_cache, eos_token_id=tok.eos_token_id)
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate)
 
     # 2. Build LSRR Model
     model = LSRRModel(

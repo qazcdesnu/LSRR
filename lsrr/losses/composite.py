@@ -5,16 +5,29 @@ import torch.nn as nn
 import torch.nn.functional as F
 from lsrr.interfaces import BaseLoss
 from lsrr.registry import LOSS_REGISTRY
+from lsrr.data.collate import IGNORE_INDEX
+
+
+def _loss_targets(batch: Dict[str, Any]) -> torch.Tensor:
+    """Targets for the answer loss: `labels` when the collate provides them.
+
+    Falling back to `target_ids` keeps ad-hoc callers working, but that tensor pads with
+    a real token id, so padding would be supervised.
+    """
+    labels = batch.get("labels")
+    return labels if labels is not None else batch["target_ids"]
 
 @LOSS_REGISTRY.register("answer_nll")
 class AnswerNLLLoss(BaseLoss):
-    def __init__(self, ignore_index: int = -100, **kwargs):
+    def __init__(self, ignore_index: int = IGNORE_INDEX, **kwargs):
         super().__init__()
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=ignore_index)
 
     def forward(self, model_outputs: Dict[str, Any], batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         logits = model_outputs["logits"]  # [B, seq_len, vocab_size]
-        targets = batch["target_ids"]     # [B, seq_len]
+        # `labels` marks padding with IGNORE_INDEX; `target_ids` pads with a real token id
+        # and is the decoder input, so supervising it would train the model on padding.
+        targets = _loss_targets(batch)    # [B, seq_len]
 
         # Shift for next token prediction if target is sequence, or direct classification
         if logits.size(1) == targets.size(1):
@@ -34,7 +47,7 @@ class DeepSupervisionLoss(BaseLoss):
     def __init__(self, cycles: str = "sample2", **kwargs):
         super().__init__()
         self.cycles = cycles
-        self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=IGNORE_INDEX)
 
     def forward(self, model_outputs: Dict[str, Any], batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         intermediate_states = model_outputs.get("intermediate_states", [])
@@ -43,7 +56,8 @@ class DeepSupervisionLoss(BaseLoss):
 
         fusion_head = model_outputs["fusion_head"]
         decoder = model_outputs["decoder"]
-        targets = batch["target_ids"]
+        targets = _loss_targets(batch)
+        decoder_inputs = batch.get("target_ids", targets)
         # Intermediate cycles must be fused against the same 3.4 context residual as
         # the final state, otherwise deep supervision optimises a different head.
         h_orig_L = model_outputs.get("h_orig_L")
@@ -63,7 +77,7 @@ class DeepSupervisionLoss(BaseLoss):
         total_loss = 0.0
         for state in chosen:
             h_f, _ = fusion_head(state, h_orig_L=h_orig_L)
-            inter_logits = decoder(h_f, targets)
+            inter_logits = decoder(h_f, decoder_inputs)
             min_len = min(inter_logits.size(1), targets.size(1))
             step_loss = self.loss_fn(
                 inter_logits[:, :min_len].reshape(-1, inter_logits.size(-1)),

@@ -39,11 +39,21 @@ def process_batch_with_oom_recovery(
                 position_rule=position_rule
             )  # [B, L, d]
 
+        eos_id = getattr(extractor.tokenizer, "eos_token_id", None)
+
         for b in range(len(samples_chunk)):
             h_sample = H_batch[b]  # [L, d]
             ans_ids = enc_ans["input_ids"][b]
             ans_mask = enc_ans["attention_mask"][b]
             clean_ans_ids = ans_ids[ans_mask == 1]
+
+            # Terminate the answer with EOS. The tokenizer does not add one, so without
+            # this the decoder never learns when to stop and generation always runs to
+            # max_new_tokens.
+            if eos_id is not None and (clean_ans_ids.numel() == 0 or int(clean_ans_ids[-1]) != eos_id):
+                clean_ans_ids = torch.cat(
+                    [clean_ans_ids, torch.tensor([eos_id], dtype=clean_ans_ids.dtype)]
+                )
             # Record the gold answer alongside the sample meta. Evaluation reads it from
             # here; without it the scorer silently compares against an empty string.
             sample_meta = dict(samples_chunk[b].meta or {})

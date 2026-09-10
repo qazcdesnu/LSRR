@@ -75,9 +75,16 @@ class ShardedHCacheWriter:
             if t.size(0) > 0:
                 target_padded[i, :t.size(0)] = t
 
+        # Record true lengths. Without them the padded rows are indistinguishable from
+        # real answer tokens, and the padding ends up supervised as GPT-2 token 0 ('!').
+        target_lens = torch.tensor(
+            [t.size(0) for t in self.current_target_ids], dtype=torch.long
+        )
+
         tensors = {
             "H": h_stacked,
-            "target_ids": target_padded
+            "target_ids": target_padded,
+            "target_lens": target_lens,
         }
         save_file(tensors, shard_path)
 
@@ -143,6 +150,8 @@ class ShardedHCacheDataset(Dataset):
 
         # Lazy open handles
         self._open_handles: Dict[str, Any] = {}
+        # Whether shards record target_lens; probed once on first access.
+        self._has_lens: Optional[bool] = None
 
     def _get_handle(self, filename: str):
         if filename not in self._open_handles:
@@ -163,6 +172,7 @@ class ShardedHCacheDataset(Dataset):
 
         target_slice = handle.get_slice("target_ids")
         target_ids = target_slice[local_idx:local_idx+1].squeeze(0)
+        target_ids = self._trim_target(handle, target_ids, local_idx)
 
         meta = self.samples_meta[idx] if idx < len(self.samples_meta) else {}
         return {
@@ -170,3 +180,23 @@ class ShardedHCacheDataset(Dataset):
             "target_ids": target_ids,
             "meta": meta
         }
+
+    def _trim_target(self, handle: Any, target_ids: torch.Tensor, local_idx: int) -> torch.Tensor:
+        """Strip shard padding so only real answer tokens are returned.
+
+        Shards written by the current writer carry `target_lens`. Older shards do not, so
+        trailing zeros are trimmed instead -- safe because GPT-2 token 0 ('!') does not
+        appear in any answer of the datasets in use, and it is exactly the value
+        `_flush_shard` pads with.
+        """
+        if self._has_lens is None:
+            self._has_lens = "target_lens" in set(handle.keys())
+
+        if self._has_lens:
+            t_len = int(handle.get_slice("target_lens")[local_idx:local_idx + 1].reshape(-1)[0])
+            return target_ids[:t_len]
+
+        nonzero = (target_ids != 0).nonzero()
+        if nonzero.numel() == 0:
+            return target_ids[:0]
+        return target_ids[: int(nonzero[-1]) + 1]
