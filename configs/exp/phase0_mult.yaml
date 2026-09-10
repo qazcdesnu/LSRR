@@ -1,0 +1,35 @@
+# Phase 0 — GPT-2 + 다자리 곱셈 (제안서 §6.3)
+# M3의 최소 학습 루프: per-layer 어댑터 + mlp_onepass + 고정 M + answer_nll
+defaults: [base, backbone/gpt2, data/multiplication]
+
+memory:
+  adapter:
+    d_model: 256          # 파라미터 예산: L×d_in×d_model = 12×768×256 ≈ 2.4M (백본의 1.9%)
+
+engine:
+  type: mlp_onepass
+  expansion: 2
+  n_blocks: 1
+
+recurrence:
+  schedule: {type: fixed, k: 4}
+  tbptt_k: 4
+
+termination:
+  type: fixed_m
+  m: 4
+  m_max: 8
+
+train:
+  epochs: 1
+  bs: 16
+  lr: 1.0e-3
+  log_every: 10
+
+data:
+  digits: 2
+  sizes: {train: 2000, val: 200, test: 200}
+
+prompt:
+  max_question_tokens: 32
+  max_answer_tokens: 12

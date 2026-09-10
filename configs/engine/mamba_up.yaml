@@ -1,7 +1,0 @@
-engine:
-  type: mamba_up
-  d_state: 16
-  n_blocks: 2
-  damping_alpha: 0.5
-  cycle_embedding: true
-  reinject_r0: gate

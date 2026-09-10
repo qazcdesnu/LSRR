@@ -1,6 +1,0 @@
-data:
-  type: prosqa
-  name: prosqa
-  num_mock_samples: 500
-  seed: 42
-  data_path: data/prosqa

@@ -47,8 +47,12 @@ htmlcov/
 .dmypy.json
 
 # LSRR large data & caches & runs
-caches/
-runs/
+# 폴더 README는 추적한다 — README 없는 폴더는 존재하지 않는 것으로 간주한다
+# (CONVENTIONS.md §5.1). 산출물 본체만 제외한다.
+caches/*
+!caches/README.md
+runs/*
+!runs/README.md
 *.safetensors
 *.pt
 *.bin
@@ -58,6 +62,11 @@ runs/
 #   python scripts/download_data.py
 # Anchored to the repo root so a `data/` directory inside a package is unaffected.
 /data/
+
+# Legacy_LSRR: 원격 `main` 브랜치가 정본이다 (저장소 루트 = 레거시 구현).
+# 로컬 사본을 v1.1에 다시 담으면 같은 내용이 두 경로로 중복된다.
+# 참조는 `git show main:<경로>`로 한다 (documents/LEGACY_MAP.md §경로 대응).
+Legacy_LSRR/
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints

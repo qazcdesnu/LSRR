@@ -1,0 +1,8 @@
+data:
+  type: multiplication
+  digits: 4
+  sizes: {train: 20000, val: 500, test: 1000}
+
+prompt:
+  max_question_tokens: 64
+  max_answer_tokens: 24

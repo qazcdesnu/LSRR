@@ -1,7 +1,0 @@
-decoder:
-  type: trained_light_decoder
-  vocab_size: 50257
-  n_layers: 2
-  n_heads: 8
-  max_seq_len: 128
-  dropout: 0.1

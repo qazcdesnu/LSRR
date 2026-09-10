@@ -1,16 +1,14 @@
-from lsrr.data.schema import StandardDataBatch
-from lsrr.data.multiplication import MultiplicationDataset
-from lsrr.data.prosqa import ProsQADataset
-from lsrr.data.gsm8k import GSM8KDataset
-from lsrr.data.cache import ShardedHCacheWriter, ShardedHCacheDataset, compute_cache_key
+"""데이터 — 스키마·프롬프트 규약·데이터셋."""
 
-__all__ = [
-    "StandardDataBatch",
-    "MultiplicationDataset",
-    "ProsQADataset",
-    "GSM8KDataset",
-    "ShardedHCacheWriter",
-    "ShardedHCacheDataset",
-    "compute_cache_key"
-]
+from lsrr.data import datasets  # 레지스트리 등록을 위한 import
+from lsrr.data.prompting import PromptEncoder, PromptSpec
+from lsrr.data.schema import SPLITS, DataSample, normalize_split
 
+__all__ = (
+    "DataSample",
+    "SPLITS",
+    "normalize_split",
+    "PromptSpec",
+    "PromptEncoder",
+    "datasets",
+)

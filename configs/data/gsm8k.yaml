@@ -1,7 +1,0 @@
-data:
-  type: gsm8k
-  name: gsm8k_aug
-  data_path: data/gsm8k-aug
-  max_train_samples: null
-  num_mock_samples: 500
-  seed: 42

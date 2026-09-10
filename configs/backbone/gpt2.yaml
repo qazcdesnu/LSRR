@@ -1,6 +1,9 @@
 backbone:
-  type: hf_causal
-  name: gpt2
+  type: hf_frozen_causal
   model_name_or_path: gpt2
-  dtype: float32
+  d_in: 768
+  num_layers: 12
   include_embedding: false
+  dtype: float32
+  pooler:
+    type: attn_pool       # 질문 전체 어텐션 풀링 (제안서 §4.1, ADR-004)

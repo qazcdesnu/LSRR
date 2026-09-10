@@ -1,65 +1,70 @@
-"""Canonical collate for cached hidden-state batches.
+"""배치 구성 (I6).
 
-Shared by training and evaluation so the two cannot drift apart. It produces two
-distinct target tensors:
-
-    target_ids  decoder *input* ids, padded with a real token id
-    labels      loss targets, padded with IGNORE_INDEX so padding is never supervised
-
-Keeping them separate matters: feeding IGNORE_INDEX into an embedding would crash, and
-supervising the padding is what made 84% of the GSM8K training signal "emit '!'".
+`PromptEncoder`가 실제 토크나이즈를 하고, 여기서는 DataLoader 계약만 맞춘다.
 """
-from typing import Any, Dict, List, Optional
+
+from __future__ import annotations
+
+from typing import Any, Callable, Optional, Sequence
 
 import torch
 
-IGNORE_INDEX = -100
+from lsrr.core.types import DataSample
+from lsrr.data.prompting import PromptEncoder
 
 
-def _ensure_eos(ids: torch.Tensor, eos_token_id: Optional[int]) -> torch.Tensor:
-    """Append EOS unless it is already the final token.
+class SampleCollator:
+    """`list[DataSample]` → 배치 dict.
 
-    Caches written before the extractor added EOS carry bare answer tokens; this keeps
-    them usable without re-extracting the hidden states.
+    `torch.utils.data.DataLoader(collate_fn=...)`에 그대로 넘긴다.
     """
-    if eos_token_id is None:
-        return ids
-    if ids.numel() > 0 and int(ids[-1]) == eos_token_id:
-        return ids
-    return torch.cat([ids, torch.tensor([eos_token_id], dtype=ids.dtype)])
+
+    def __init__(
+        self,
+        encoder: PromptEncoder,
+        device: Optional[torch.device] = None,
+        check_leakage: bool = True,
+    ) -> None:
+        self.encoder = encoder
+        self.device = device
+        self.check_leakage = check_leakage
+
+    def __call__(self, samples: Sequence[DataSample]) -> dict[str, Any]:
+        return self.encoder.encode_batch(
+            samples, device=self.device, check_leakage=self.check_leakage
+        )
 
 
-def collate_h_cache(
-    batch: List[Dict[str, Any]],
-    eos_token_id: Optional[int] = None,
-    pad_token_id: Optional[int] = None,
-) -> Dict[str, Any]:
-    """Collate cached samples into a padded batch.
+class SampleDataset(torch.utils.data.Dataset):
+    """`list[DataSample]`을 감싸는 최소 Dataset."""
 
-    Args:
-        batch: items from ShardedHCacheDataset, whose target_ids are already trimmed.
-        eos_token_id: when given, every target is made to end with EOS.
-        pad_token_id: filler for decoder input padding; defaults to eos_token_id, else 0.
-    """
-    H = torch.stack([item["H"] for item in batch], dim=0)
+    def __init__(self, samples: Sequence[DataSample]) -> None:
+        self.samples = list(samples)
 
-    targets = [_ensure_eos(item["target_ids"], eos_token_id) for item in batch]
-    target_lens = torch.tensor([t.size(0) for t in targets], dtype=torch.long)
-    max_len = int(target_lens.max()) if len(targets) else 0
+    def __len__(self) -> int:
+        return len(self.samples)
 
-    pad_id = pad_token_id if pad_token_id is not None else (eos_token_id or 0)
-    target_ids = torch.full((len(batch), max_len), pad_id, dtype=torch.long)
-    labels = torch.full((len(batch), max_len), IGNORE_INDEX, dtype=torch.long)
-    for i, t in enumerate(targets):
-        n = t.size(0)
-        if n > 0:
-            target_ids[i, :n] = t
-            labels[i, :n] = t
+    def __getitem__(self, idx: int) -> DataSample:
+        return self.samples[idx]
 
-    return {
-        "H": H,
-        "target_ids": target_ids,
-        "labels": labels,
-        "target_lens": target_lens,
-        "meta": [item["meta"] for item in batch],
-    }
+
+def make_loader(
+    samples: Sequence[DataSample],
+    encoder: PromptEncoder,
+    batch_size: int = 16,
+    shuffle: bool = False,
+    device: Optional[torch.device] = None,
+    generator: Optional[torch.Generator] = None,
+    **kwargs: Any,
+) -> torch.utils.data.DataLoader:
+    return torch.utils.data.DataLoader(
+        SampleDataset(samples),
+        batch_size=batch_size,
+        shuffle=shuffle,
+        collate_fn=SampleCollator(encoder, device=device),
+        generator=generator,
+        **kwargs,
+    )
+
+
+__all__ = ("SampleCollator", "SampleDataset", "make_loader")

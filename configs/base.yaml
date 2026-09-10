@@ -1,18 +1,79 @@
-# Base configuration
+# 공통 기본값
 #
-# Reasoning width: d_model is NOT set here. It defaults to the backbone hidden size
-# (d_in) so that no dimension reduction sits between the backbone context representation
-# and the reasoning state, which is what lets proposal 3.4 fuse
-#   h_fusion = h_orig_L + W_r * h_ssm
-# with h_orig_L = R0[:, -1, :] directly. Set `adapter.d_model` to override.
+# 사고 메모리 폭 d_model은 여기서 정하지 않는다. 명시가 없으면 백본 폭 d_in을
+# 따르되, d_in과 독립이다 (ADR-003) — 융합 잔차 앵커가 백본 원본 h^(L)로
+# 옮겨가면서 d_model 제약이 풀렸다. 엔진 폭을 줄여 제안서 §5의 파라미터
+# 예산("백본 대비 약 3% 이내")을 지키는 주된 노브가 memory.adapter.d_model이다.
+
 seed: 42
 deterministic: true
+device: auto
 
-device: "auto"
+memory:
+  composer:
+    type: gate          # H_last + H_pool 결합 (ADR-004)
+  scope:
+    type: all_layers    # Ablation A의 기준 조건
+  adapter:
+    type: per_layer_affine
+    layer_pos_emb: true
+    use_rmsnorm: true
+
+engine:
+  type: hydra_qs        # quasiseparable 양방향 (제안서 §4.2)
+  d_state: 16
+  n_blocks: 2
+  damping_alpha: 0.5    # 감쇠 갱신 (Ablation D)
+  reinject_r0: gate     # R⁰ 재주입
+  cycle_embedding: true # 사이클 임베딩
+
+recurrence:
+  schedule:
+    type: lognormal     # M 무작위 샘플링 → 수렴 압력 (i) (제안서 §4.3)
+    mean: 6
+    std: 1.0
+    max: 16
+  tbptt_k: 4
+  hooks:
+    readout_per_cycle: false
+
+termination:
+  type: delta_state     # Δ<ε (Ablation B의 기준 조건)
+  eps: 1.0e-3
+  m_max: 32             # 폴백 필수 (I5)
+
+stability:
+  type: none            # 사다리는 기본 꺼짐 (ADR-007)
+
+readout:
+  fusion:
+    type: attention_pooling
+    fusion_type: residual   # h_fusion = h_ctx + W_r·h_SSM
+    w_r_init_scale: 0.01    # 작게 시작 → 학습 초기에 백본 원래 동작에서 출발
+  path:
+    type: backbone_continuation   # 학습 디코더 없음 (ADR-001)
+    max_new_tokens: 32
+
+objective:
+  answer_nll:
+    enabled: true
+    w: 1.0
+  deep_supervision:
+    enabled: false
+    w: 0.3
+    gamma: 0.85
+    num_cycles: 2
+  variance_reg:
+    enabled: false
+    w: 0.01
+    target_std: 1.0
+  distillation:
+    enabled: false        # ablation 전용 (제안서 §5)
+    w: 0.0
 
 train:
   epochs: 10
-  bs: 64
+  bs: 16
   lr: 3.0e-4
   weight_decay: 1.0e-2
   grad_clip: 1.0
@@ -21,12 +82,13 @@ train:
   min_lr: 1.0e-5
   seeds: [0]
 
+eval:
+  split: test
+  max_new_tokens: 32
+  anytime_curve: true
+
 extract:
   batch_size: 16
-  precision: "float32"
-  position_rule: "last_token"
+  precision: float32
   shard_size: 5000
-  cache_dir: "caches"
-
-losses:
-  - {type: answer_nll, w: 1.0}
+  cache_dir: caches

@@ -1,0 +1,15 @@
+# Ablation C — 사고 엔진 구조 (제안서 §7)
+# 믹서 행렬 클래스 관점의 비교: 대각(MLP) / dense(어텐션) /
+# semiseparable(단방향 SSM) / quasiseparable(양방향 Hydra).
+#
+# 비교가 성립하려면 파라미터·FLOPs가 정합되어야 한다 (ADR-009).
+defaults: [base, backbone/gpt2]
+
+data:
+  type: prosqa
+
+sweep:
+  engine.type: [mlp_onepass, attn_block, mamba_up, mamba_down, bidir_add, hydra_qs]
+
+engine:
+  budget_match: hydra_qs

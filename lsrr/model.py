@@ -1,186 +1,229 @@
-from typing import Dict, Any, Optional, Tuple, List
+"""조립된 LSRR 모델의 순전파 계약.
+
+이 파일은 어떤 연산도 직접 구현하지 않는다 — 슬롯 인터페이스만 호출한다.
+연산이 여기 들어오려 하면 그것은 어느 하위 패키지의 역할인지 다시 물을 신호다.
+
+파이프라인 (ARCHITECTURE.md §2):
+    질문 → [백본 1회] → memory → recurrence×engine → readout → 백본 연속 디코딩
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional, Sequence
+
 import torch
 import torch.nn as nn
 from omegaconf import DictConfig
 
-from lsrr.registry import (
-    ADAPTER_REGISTRY,
-    ENGINE_REGISTRY,
-    FUSION_REGISTRY,
-    DECODER_REGISTRY,
-    TERMINATION_REGISTRY
-)
-from lsrr.iteration.controller import IterationController
-import lsrr.adapters
-import lsrr.engines
-import lsrr.fusion
-import lsrr.decoders
-import lsrr.termination
-
-
-def _resolve_d_model(adapter_cfg: Any, d_in: int) -> int:
-    """Resolve the reasoning width d_model.
-
-    Defaults to the backbone hidden size d_in, so no dimension reduction sits between
-    the backbone context representation and the reasoning state. This is what lets
-    R0[:, -1, :] be handed straight to the fusion residual of proposal 3.4.
-    An explicit `adapter.d_model` in the config still wins, which small tests rely on.
-    """
-    if hasattr(adapter_cfg, "get"):
-        explicit = adapter_cfg.get("d_model", None)
-        if explicit is not None:
-            return int(explicit)
-    return int(d_in)
+from lsrr.builder import SlotBundle
+from lsrr.config.schema import get_path
+from lsrr.core.errors import AssemblyError
+from lsrr.core.interfaces import BaseCycleRunner, CycleHook
+from lsrr.core.invariants import EncodeCounter, assert_injection_space
+from lsrr.core.types import ContextBundle, ReasoningTrace
 
 
 class LSRRModel(nn.Module):
-    """Full Layer-State Recurrent Reasoner (LSRR) architecture."""
+    """Layer-State Recurrent Reasoner.
+
+    학습 대상은 어댑터 + 엔진 + 융합/판독 헤드뿐이다 (제안서 §5).
+    인코더(백본)는 동결이며 `nn.Module` 자식으로 등록하지 않는다 — 체크포인트에
+    백본 가중치가 섞이는 것을 구조적으로 막기 위해서다.
+    """
+
     def __init__(
         self,
-        adapter_cfg: Dict[str, Any],
-        engine_cfg: Dict[str, Any],
-        fusion_cfg: Dict[str, Any],
-        decoder_cfg: Dict[str, Any],
-        iteration_cfg: Optional[Dict[str, Any]] = None,
-        termination_cfg: Optional[Dict[str, Any]] = None,
-        d_in: int = 768,       # default GPT-2 hidden size
-        num_layers: int = 12   # default GPT-2 layer count
-    ):
+        bundle: SlotBundle,
+        cfg: Optional[DictConfig] = None,
+        runner: Optional[BaseCycleRunner] = None,
+    ) -> None:
         super().__init__()
-        # Single source of truth for the reasoning width, shared by every downstream slot.
-        d_model = _resolve_d_model(adapter_cfg, d_in)
-        self.d_in = d_in
-        self.d_model = d_model
-        self.num_layers = num_layers
+        self.cfg = cfg
+        self.widths = dict(bundle.widths)
+        self.warnings = list(bundle.warnings)
+        self.slot_device = bundle.device
 
-        # Build LayerAdapter
-        self.adapter = ADAPTER_REGISTRY.build(
-            adapter_cfg,
-            d_in=d_in,
-            num_layers=num_layers,
-            d_model=d_model
+        # 동결 백본: nn.Module 자식이 아니다 (체크포인트 오염 방지, I1)
+        object.__setattr__(self, "_encoder", bundle.encoder)
+        object.__setattr__(self, "_data", bundle.data)
+
+        # 학습 대상 슬롯
+        self.pooler = bundle.pooler
+        self.pipeline = bundle.pipeline
+        self.composer = bundle.composer
+        self.scope = bundle.scope
+        self.adapter = bundle.adapter
+        self.engine = bundle.engine
+        self.fusion = bundle.fusion
+        self.readout = bundle.readout
+        self.objective = bundle.objective
+
+        # 비학습 정책 객체
+        object.__setattr__(self, "schedule", bundle.schedule)
+        object.__setattr__(self, "termination", bundle.termination)
+        object.__setattr__(self, "stability", bundle.stability)
+        object.__setattr__(self, "runner", runner)
+
+        allow_reencode = bool(
+            get_path(cfg, "experimental.reencoding_loop", False) if cfg else False
         )
-        adapter_d_model = int(getattr(self.adapter, "d_model", d_model))
-        if adapter_d_model != d_model:
-            raise ValueError(
-                f"Adapter produced d_model={adapter_d_model} but the model resolved "
-                f"d_model={d_model}. Engine, fusion and decoder are all built at the "
-                f"resolved width, so the adapter must match it."
-            )
+        self.encode_counter = EncodeCounter(allow_reencoding=allow_reencode)
 
-        # Build RefinementEngine
-        self.engine = ENGINE_REGISTRY.build(
-            engine_cfg,
-            d_model=d_model
-        )
+    # ------------------------------------------------------------ 접근자
 
-        # Build FusionHead. d_out == d_model keeps h_fusion in the same space as
-        # h_orig_L, which the 3.4 residual `h_orig_L + W_r * h_ssm` requires.
-        self.fusion = FUSION_REGISTRY.build(
-            fusion_cfg,
-            d_model=d_model,
-            d_out=d_model
-        )
+    @property
+    def encoder(self) -> Any:
+        return self._encoder
 
-        # Build AnswerDecoder
-        self.decoder = DECODER_REGISTRY.build(
-            decoder_cfg,
-            d_model=d_model
-        )
+    @property
+    def d_in(self) -> int:
+        return int(self.widths["d_in"])
 
-        # TerminationRule
-        if termination_cfg is not None:
-            self.termination_rule = TERMINATION_REGISTRY.build(termination_cfg)
-        else:
-            self.termination_rule = TERMINATION_REGISTRY.build({"type": "delta_state", "eps": 1e-3, "m_max": 32})
+    @property
+    def d_model(self) -> int:
+        return int(self.widths["d_model"])
 
-        # IterationController
-        train_m_cfg = iteration_cfg.get("train_m", {"type": "fixed", "k": 6}) if iteration_cfg else {"type": "fixed", "k": 6}
-        tbptt_k = iteration_cfg.get("tbptt_k", 4) if iteration_cfg else 4
-        m_max = termination_cfg.get("m_max", 32) if termination_cfg else 32
+    def trainable_parameters(self) -> list[nn.Parameter]:
+        """옵티마이저에 넘길 파라미터. 백본은 여기 없다 (§5)."""
+        return [p for p in self.parameters() if p.requires_grad]
 
-        self.controller = IterationController(
-            engine=self.engine,
-            train_m_cfg=train_m_cfg,
-            tbptt_k=tbptt_k,
-            termination_rule=self.termination_rule,
-            m_max=m_max
-        )
+    def parameter_report(self) -> dict[str, Any]:
+        """학습 파라미터 수와 백본 대비 비율.
 
-    @staticmethod
-    def context_residual(R0: torch.Tensor) -> torch.Tensor:
-        """Proposal 3.4 residual term h^(L), read off the adapted layer memory.
-
-        R0 is the adapter output, so its last layer slot is the backbone's own top-layer
-        context representation *before* any SSM refinement. Using R_star[:, -1, :] here
-        instead would make h_fusion a pure function of the SSM output and delete the
-        residual bypass the proposal specifies.
+        제안서 §5의 "백본 대비 약 3% 이내" 주장이 매 런에서 확인되어야 한다.
         """
-        return R0[:, -1, :]
+        trainable = sum(p.numel() for p in self.trainable_parameters())
+        backbone = 0
+        enc = self._encoder
+        if enc is not None and hasattr(enc, "num_parameters"):
+            backbone = int(enc.num_parameters())
+        return {
+            "trainable": trainable,
+            "backbone": backbone,
+            "ratio": (trainable / backbone) if backbone else None,
+        }
+
+    # ------------------------------------------------------------ 단계
+
+    def encode(
+        self, input_ids: torch.Tensor, attention_mask: Optional[torch.Tensor] = None
+    ) -> ContextBundle:
+        """백본 1회 인코딩 (I2). 사이클 루프 안에서 호출하지 않는다."""
+        if self._encoder is None:
+            raise AssemblyError("인코더 없이 encode()를 호출했다.")
+        self.encode_counter.record()
+        return self.pool_context(self._encoder.encode(input_ids, attention_mask))
+
+    def pool_context(self, context: ContextBundle) -> ContextBundle:
+        """질문 전체 풀링으로 글로벌 문맥 보완항을 채운다 (제안서 §4.1, ADR-004).
+
+        풀러는 학습 대상이므로 동결 세션 안이 아니라 모델의 자식으로 등록되어
+        있고, 따라서 인코딩 직후 여기서 호출한다 (ADR-012).
+        """
+        if self.pooler is None or context.hidden_stack is None:
+            return context
+        context.H_pool = self.pooler(context.hidden_stack, context.attention_mask)
+        return context
+
+    def build_memory(self, context: ContextBundle) -> torch.Tensor:
+        """ContextBundle → R⁰. 순서 고정: compose → scope → adapt (memory/README)."""
+        if self.pipeline is not None:
+            return self.pipeline(context)
+        H = context.H_last
+        if self.composer is not None:
+            H = self.composer(H, context.H_pool)
+        if self.scope is not None:
+            H = self.scope(H)
+        if self.adapter is not None:
+            H = self.adapter(H)
+        return H
+
+    def refine(
+        self,
+        R0: torch.Tensor,
+        hooks: Sequence[CycleHook] = (),
+        is_eval: bool = False,
+    ) -> ReasoningTrace:
+        """사이클 축 반복. 축 제어는 전부 runner의 일이다."""
+        if self.runner is None:
+            raise AssemblyError(
+                "CycleRunner가 조립되지 않았다. `lsrr.recurrence`는 M4에서 구현된다 "
+                "— 그때까지는 runner를 직접 주입하라 (ROADMAP.md)."
+            )
+        return (
+            self.runner.run_eval(R0, hooks=hooks)
+            if is_eval
+            else self.runner.run_train(R0, hooks=hooks)
+        )
+
+    def read(
+        self,
+        R: torch.Tensor,
+        context: ContextBundle,
+        answer_ids: Optional[torch.Tensor] = None,
+        m: Optional[int] = None,
+    ) -> Any:
+        """전 사이클 공유 판독 경로 호출 (I3)."""
+        if self.readout is None:
+            raise AssemblyError("판독 경로가 조립되지 않았다.")
+        result = self.readout.readout(
+            R, context.h_ctx, context, answer_ids=answer_ids, m=m
+        )
+        if result.h_fusion is not None:
+            assert_injection_space(result.h_fusion, self.d_in)  # I8
+        return result
+
+    # ------------------------------------------------------------ 순전파
 
     def forward(
         self,
-        H: torch.Tensor,
-        target_ids: Optional[torch.Tensor] = None,
-        is_eval: bool = False
-    ) -> Dict[str, Any]:
-        """Args:
-            H: [B, L, d_in] extracted layer hidden states
-            target_ids: [B, seq_len] answer token ids for teacher-forcing
-            is_eval: whether to use evaluation mode with dynamic termination
+        batch: dict[str, Any],
+        is_eval: bool = False,
+        hooks: Sequence[CycleHook] = (),
+    ) -> ReasoningTrace:
+        """전체 순전파.
+
+        Args:
+            batch: 최소 `input_ids`. 학습 시 `labels`/`target_ids`.
+            is_eval: 동적 종료를 쓰는 평가 모드.
+            hooks: 사이클 콜백 (진단 기록·깊은 감독·anytime 곡선).
+
+        Returns:
+            ReasoningTrace. 모듈 객체는 담지 않는다 (ADR-005).
         """
-        # 1. Adapt H to R0
-        R0 = self.adapter(H)  # [B, L, d_model]
-        h_orig_L = self.context_residual(R0)  # [B, d_model]
+        self.encode_counter.reset()
 
-        if not is_eval:
-            # Training recursive refinement
-            R_star, inter_states, diags = self.controller.run_train(R0)
-            stopping_cycles = None
-        else:
-            # Evaluation with early exit termination
-            R_star, diags, stopping_cycles = self.controller.run_eval(
-                R0,
-                fusion_head=self.fusion,
-                decoder=self.decoder,
-                h_orig_L=h_orig_L
-            )
-            inter_states = [R_star]
+        context = self.encode(batch["input_ids"], batch.get("attention_mask"))
+        R0 = self.build_memory(context)
 
-        # 2. Attention pooling representation fusion with the 3.4 context residual
-        h_fusion, alpha_weights = self.fusion(R_star, h_orig_L=h_orig_L)
+        trace = self.refine(R0, hooks=hooks, is_eval=is_eval)
+        trace.R0 = R0
+        trace.h_ctx = context.h_ctx
 
-        # 3. Answer decoding
-        logits = self.decoder(h_fusion, target_ids)
-
-        return {
-            "logits": logits,
-            "R0": R0,
-            "R_star": R_star,
-            "h_orig_L": h_orig_L,
-            "h_fusion": h_fusion,
-            "alpha_weights": alpha_weights,
-            "intermediate_states": inter_states,
-            "diagnostics": diags,
-            "stopping_cycles": stopping_cycles,
-            "fusion_head": self.fusion,
-            "decoder": self.decoder
-        }
-
-    def generate_answer(
-        self,
-        H: torch.Tensor,
-        max_new_tokens: int = 32
-    ) -> Tuple[torch.Tensor, torch.Tensor, List[Any]]:
-        """Evaluation answer generation."""
-        R0 = self.adapter(H)
-        h_orig_L = self.context_residual(R0)
-        R_star, diags, stopping_cycles = self.controller.run_eval(
-            R0,
-            fusion_head=self.fusion,
-            decoder=self.decoder,
-            h_orig_L=h_orig_L
+        readout = self.read(
+            trace.R_star if trace.R_star is not None else R0,
+            context,
+            answer_ids=batch.get("target_ids"),
         )
-        h_fusion, alpha_weights = self.fusion(R_star, h_orig_L=h_orig_L)
-        gen_tokens = self.decoder.generate(h_fusion, max_new_tokens=max_new_tokens)
-        return gen_tokens, stopping_cycles, diags
+        trace.logits = readout.logits
+        trace.h_fusion = readout.h_fusion
+        trace.alpha = readout.alpha
+        trace.meta.setdefault("encode_count", self.encode_counter.count)
+        return trace
+
+    def __repr__(self) -> str:
+        parts = [
+            f"{k}={type(v).__name__}"
+            for k, v in (
+                ("encoder", self._encoder),
+                ("adapter", self.adapter),
+                ("engine", self.engine),
+                ("termination", self.termination),
+                ("readout", self.readout),
+            )
+            if v is not None
+        ]
+        return f"LSRRModel(d_in={self.widths.get('d_in')}, d_model={self.widths.get('d_model')}, {', '.join(parts)})"
+
+
+__all__ = ("LSRRModel",)

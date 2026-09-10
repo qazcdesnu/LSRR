@@ -11,12 +11,14 @@ dependencies = [
     "safetensors",
     "omegaconf",
     "pyyaml",
-    "pytest",
     "datasets",
     "pandas",
     "tabulate",
-    "tqdm"
+    "tqdm",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -24,3 +26,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["lsrr*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "contract: 아키텍처 불변식(I1-I8) 계약 테스트",
+    "slow: 느린 테스트 (백본 로드 등)",
+]

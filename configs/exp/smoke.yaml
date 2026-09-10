@@ -1,0 +1,11 @@
+# M1 스모크: 조립 루트가 끝까지 통과하는지만 확인한다.
+# 실제 슬롯 구현은 M2 이후이므로 이 설정은 테스트의 더미 등록과 함께 쓰인다.
+defaults: [base, backbone/gpt2]
+
+data:
+  type: multiplication
+  digits: 4
+
+train:
+  epochs: 1
+  bs: 4
