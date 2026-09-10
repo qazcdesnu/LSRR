@@ -8,8 +8,27 @@ from lsrr.engines.ssm_core import selective_scan_sequential
 from lsrr.engines.wrapper import EngineWrapper
 
 class HydraQSCore(nn.Module):
-    """Quasiseparable Bidirectional SSM Core:
-    Y = shift(SS_fwd(X)) + flip(shift(SS_bwd(flip(X)))) + D * X
+    """Quasiseparable bidirectional SSM core (Hydra).
+
+        Y = shift(SS_fwd(X)) + flip(shift(SS_bwd(flip(X)))) + D * X
+
+    Follows Hydra (Hwang, Lahoti, Dao, Gu; arXiv:2407.09941), whose reference
+    implementation applies the shift as `roll(y, 1, dim=1)` with position 0 zeroed,
+    keeps D out of the scans, and adds the skip term exactly once.
+
+    The shift is what makes the mixer quasiseparable: an SSM scan output at position l
+    already contains l's own contribution, so summing a forward and a backward scan
+    would count the diagonal twice, and the D skip a third time. Shifting removes the
+    diagonal from both scans and leaves D as its sole source.
+
+    With `disable_backward=True` there is no second scan and therefore no double count,
+    so the shift is not applied and the block reduces to standard (semiseparable) Mamba
+    -- which is what makes it numerically identical to MambaUp.
+
+    Deviation from the reference: D here is a static per-channel parameter, where Hydra
+    uses a data-dependent per-head projection. This keeps hydra_qs and bidir_add
+    differing in exactly one factor (the shift), so ablation C isolates the
+    quasiseparable structure rather than confounding it with the skip parameterization.
     """
     def __init__(
         self,
@@ -56,6 +75,14 @@ class HydraQSCore(nn.Module):
         # Out-projection
         self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
 
+    @staticmethod
+    def _shift(y: torch.Tensor) -> torch.Tensor:
+        """Quasiseparable shift: y_shifted[l] = y[l - 1], y_shifted[0] = 0.
+
+        Equivalent to the reference implementation's roll-by-one with position 0 zeroed.
+        """
+        return torch.cat([torch.zeros_like(y[:, :1]), y[:, :-1]], dim=1)
+
     def _run_ssm_branch(self, u: torch.Tensor, x_proj: nn.Linear, dt_proj: nn.Linear, A_log: nn.Parameter) -> torch.Tensor:
         B_sz, L, _ = u.shape
         x_dbl = x_proj(u)
@@ -87,9 +114,17 @@ class HydraQSCore(nn.Module):
             # Backward scan: flip -> SS_bwd -> flip
             u_flipped = torch.flip(u_act, dims=[1])
             y_bwd_raw = self._run_ssm_branch(u_flipped, self.x_proj_bwd, self.dt_proj_bwd, self.A_log_bwd)
-            y_bwd = torch.flip(y_bwd_raw, dims=[1])
+
+            # Quasiseparable shift, applied in each scan's own direction:
+            #   Y = shift(SS_fwd(X)) + flip(shift(SS_bwd(flip(X)))) + D * X
+            # Without it the diagonal is counted three times and the mixer is not
+            # quasiseparable -- it degenerates into the bidir_add baseline.
+            y_fwd = self._shift(y_fwd)
+            y_bwd = torch.flip(self._shift(y_bwd_raw), dims=[1])
+
             y_total = y_fwd + y_bwd + self.D * u_act
         else:
+            # Unidirectional: the diagonal lives in the single scan, as in Mamba.
             y_total = y_fwd + self.D * u_act
 
         # Gated output: y * silu(z)
