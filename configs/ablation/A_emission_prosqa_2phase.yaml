@@ -1,0 +1,88 @@
+# 게이트 ③ **2단 재판정** — 세 조건 모두 Phase B 정렬을 받는다 (ADR-016 개정)
+#
+# 1단(Phase A 동결·콜드 스타트)에서 ③이 FAIL 이었다: 처치 0.5893 vs 대조 0.5853,
+# 차이 +0.0040 (기준 ≥0.01), p=0.35, d=0.24. 세 기준 모두 미달이다.
+#
+# **즉시 킬이 아니다.** 구성 요소가 상호작용하면 — LoRA 정렬이 있어야 궤적의
+# 가치가 드러나는 구조라면 — 최소 구성 판정이 거짓 음성을 낸다. §3-⑦이 LoRA
+# 논거를 전적으로 **수신 측**에 둔 것이 그 상호작용의 존재를 주장하는 것이다.
+# 실제로 dynamic_m 단독 2-phase 런에서 Phase B 증분이 +0.0333 이었다 — 하한의
+# 3.3배이고, 1단의 조건 간 차이 0.0040 과 대비된다.
+#
+# **세 조건 모두 같은 LoRA 예산으로 Phase B 를 받는다.** 대조군만 Phase A 로
+# 두면 이 비교가 "궤적 vs 정렬" 로 오염된다 (ADR-016 2단 범위 규정).
+#
+#   조건          emission    termination   anchor
+#   single_v1     single      delta_state   ctx    ← 대조군
+#   fixed_k       trajectory  fixed_m(=4)   first
+#   dynamic_m     trajectory  delta_state   first  ← v2 기본
+#
+# 이 설정은 **1시드 예비 확인**이다. 시드 1개로는 게이트 ③을 판정할 수 없다
+# (min_seeds=5). 방향이 잡히면 `sweep.seed` 를 [0,1,2,3,4] 로 늘려 정식 판정한다.
+defaults: [base, backbone/gpt2, data/prosqa]
+
+backbone:
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.0
+    target_modules: [c_attn, c_proj]
+
+memory:
+  adapter:
+    d_model: 256
+
+engine:
+  type: hydra_qs
+  d_state: 16
+  n_blocks: 2
+
+recurrence:
+  schedule: {type: lognormal, mean: 5, max: 8}
+  tbptt_k: 4
+
+termination:
+  type: delta_state
+  # ε 은 base.yaml 을 따른다 (0.1). 폴백을 감추지 않는다 (F-030).
+  m: 4            # fixed_m 조건이 쓴다. delta_state 는 무시한다
+  m_min: 1
+  m_max: 8
+
+readout:
+  path:
+    emission: trajectory
+    max_new_tokens: 12
+  fusion:
+    anchor: first
+
+train:
+  bs: 8
+  log_every: 200
+  # 1단 게이트 런은 5 epoch 였다. 2단은 Phase A 10 epoch 으로 맞춘다 —
+  # dynamic_m 단독 2-phase 런(+0.0333)과 같은 예산이어야 비교가 성립한다.
+  phases:
+    - {name: A, epochs: 10, lr: 1.0e-3, trainable: [engine, memory, emitter]}
+    - {name: B, epochs: 5,  lr: 1.0e-4, trainable: [emitter, lora]}
+
+eval:
+  max_new_tokens: 12
+
+gates:
+  phase0:
+    min_seeds: 5
+
+sweep:
+  condition:
+    - name: single_v1
+      readout.path.emission: single
+      termination.type: delta_state
+      readout.fusion.anchor: ctx
+    - name: fixed_k
+      readout.path.emission: trajectory
+      termination.type: fixed_m
+      readout.fusion.anchor: first
+    - name: dynamic_m
+      readout.path.emission: trajectory
+      termination.type: delta_state
+      readout.fusion.anchor: first
+  seed: [0]

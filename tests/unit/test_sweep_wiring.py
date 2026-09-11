@@ -23,7 +23,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from lsrr.config.sweep import sweep_plan, sweep_size  # noqa: E402
 from lsrr.core.errors import ConfigError  # noqa: E402
-from scripts.sweep import _already_done, _run_dir_from  # noqa: E402
+from scripts.sweep import _already_done, _eval_targets, _run_dir_from  # noqa: E402
 
 
 # ------------------------------------------------------------------ 전개
@@ -130,12 +130,22 @@ def _child(name: str):
     return SweepChild(index=0, name=name, overrides={}, cfg=OmegaConf.create({}))
 
 
+def _make_run(runs: Path, name: str, phases: tuple[str, ...] = ()) -> Path:
+    run = runs / f"{name}_hydra_qs_gpt2_20260911_000000_s0"
+    (run / "checkpoints").mkdir(parents=True)
+    if phases:
+        for ph in phases:
+            (run / "checkpoints" / f"phase_{ph}.pt").write_bytes(b"")
+    else:
+        (run / "checkpoints" / "last.pt").write_bytes(b"")
+    return run
+
+
 def test_already_done_requires_both_artifacts(tmp_path):
     """둘 중 하나만 있으면 완료가 아니다 — 게이트가 반쪽 데이터로 판정한다."""
     runs = tmp_path / "runs"
     child = _child("A_condition_dynamic_m_seed_0")
-    run = runs / f"{child.name}_hydra_qs_gpt2_20260911_000000_s0"
-    run.mkdir(parents=True)
+    run = _make_run(runs, child.name)
     assert _already_done(runs, child) is None
 
     (run / "metrics.json").write_text("{}")
@@ -145,11 +155,47 @@ def test_already_done_requires_both_artifacts(tmp_path):
     assert _already_done(runs, child) == run
 
 
+def test_a_run_without_a_checkpoint_is_not_done(tmp_path):
+    """평가 산출물만 있고 체크포인트가 없으면 학습이 죽은 런이다."""
+    runs = tmp_path / "runs"
+    child = _child("A_condition_dynamic_m_seed_0")
+    run = runs / f"{child.name}_hydra_qs_gpt2_t_s0"
+    run.mkdir(parents=True)
+    (run / "metrics.json").write_text("{}")
+    (run / "gate_inputs.json").write_text("{}")
+    assert _already_done(runs, child) is None
+
+
+def test_two_phase_run_needs_every_phase_evaluated(tmp_path):
+    """Phase A 체크포인트가 완전 동결 조건이고 Phase B 증분이 정렬 이득이다.
+
+    하나만 재고 완료로 세면 Ablation B 의 절반이 사라진다 (§5.0).
+    """
+    runs = tmp_path / "runs"
+    child = _child("A2_condition_dynamic_m_seed_0")
+    run = _make_run(runs, child.name, phases=("A", "B"))
+
+    assert [t for _, t in _eval_targets(run)] == ["_phase_A", "_phase_B"]
+
+    (run / "metrics_phase_A.json").write_text("{}")
+    (run / "gate_inputs_phase_A.json").write_text("{}")
+    assert _already_done(runs, child) is None  # B 가 아직이다
+
+    (run / "metrics_phase_B.json").write_text("{}")
+    (run / "gate_inputs_phase_B.json").write_text("{}")
+    assert _already_done(runs, child) == run
+
+
+def test_single_phase_run_evaluates_last_checkpoint(tmp_path):
+    """페이즈 체크포인트가 없으면 단일 페이즈 런이다 — 기존 동작 그대로."""
+    run = _make_run(tmp_path / "runs", "solo")
+    assert [(p.name, t) for p, t in _eval_targets(run)] == [("last.pt", "")]
+
+
 def test_already_done_does_not_confuse_sibling_conditions(tmp_path):
     runs = tmp_path / "runs"
     for name in ("A_condition_dynamic_m_seed_0", "A_condition_single_v1_seed_0"):
-        d = runs / f"{name}_hydra_qs_gpt2_t_s0"
-        d.mkdir(parents=True)
+        d = _make_run(runs, name)
         (d / "metrics.json").write_text("{}")
         (d / "gate_inputs.json").write_text("{}")
     assert _already_done(runs, _child("A_condition_dynamic_m_seed_0")) is not None

@@ -104,9 +104,29 @@ def _already_done(runs_dir: Path, child: SweepChild) -> Optional[Path]:
     되고 평가가 죽은 런을 완료로 세면 게이트가 빈 표로 판정한다.
     """
     for run in sorted(runs_dir.glob(f"{child.name}_*"), reverse=True):
-        if (run / "metrics.json").exists() and (run / "gate_inputs.json").exists():
+        if _eval_targets(run) and all(
+            (run / f"metrics{t}.json").exists() and (run / f"gate_inputs{t}.json").exists()
+            for _, t in _eval_targets(run)
+        ):
             return run
     return None
+
+
+def _eval_targets(run_dir: Path) -> list[tuple[Path, str]]:
+    """평가할 (체크포인트, 태그) 목록.
+
+    2원화 학습은 한 런이 페이즈마다 체크포인트를 남긴다 (§5.0). **둘 다 평가해야
+    한다** — Phase A 체크포인트가 완전 동결 조건이고 Phase B 증분이 순수 정렬
+    이득이므로, 하나만 재면 Ablation B 의 절반이 사라진다.
+
+    페이즈 체크포인트가 없으면 단일 페이즈 런이므로 `last.pt` 하나다.
+    """
+    ckpt_dir = run_dir / "checkpoints"
+    phases = sorted(ckpt_dir.glob("phase_*.pt"))
+    if phases:
+        return [(p, f"_{p.stem}") for p in phases]
+    last = ckpt_dir / "last.pt"
+    return [(last, "")] if last.exists() else []
 
 
 def _child_overrides(child: SweepChild, rest: list[str]) -> list[str]:
@@ -139,24 +159,32 @@ def _execute(
     if code != 0 or run_dir is None:
         return None
 
-    eval_cmd = [
-        sys.executable, str(REPO_ROOT / "scripts" / "eval.py"),
-        "--run", str(run_dir),
-        "--checkpoint", str(run_dir / "checkpoints" / "last.pt"),
-        "--split", args.split,
-        "--anytime-batches", str(args.anytime_batches),
-    ]
-    if args.limit:
-        eval_cmd += ["--limit", str(args.limit)]
-    eval_cmd += overrides
-
-    code, _ = _run(eval_cmd, f"{child.name} eval")
-    if code != 0:
+    targets = _eval_targets(run_dir)
+    if not targets:
+        print(f"    평가할 체크포인트가 없다: {run_dir}/checkpoints")
         return None
+
+    for ckpt, tag in targets:
+        eval_cmd = [
+            sys.executable, str(REPO_ROOT / "scripts" / "eval.py"),
+            "--run", str(run_dir),
+            "--checkpoint", str(ckpt),
+            "--split", args.split,
+            "--anytime-batches", str(args.anytime_batches),
+        ]
+        if tag:
+            eval_cmd += ["--tag", tag.lstrip("_")]
+        if args.limit:
+            eval_cmd += ["--limit", str(args.limit)]
+        eval_cmd += overrides
+
+        code, _ = _run(eval_cmd, f"{child.name} eval{tag}")
+        if code != 0:
+            return None
 
     return {"index": child.index, "name": child.name,
             "overrides": child.overrides, "run_dir": str(run_dir),
-            "skipped": False}
+            "evaluated": [t for _, t in targets], "skipped": False}
 
 
 def main(argv: list[str] | None = None) -> int:
