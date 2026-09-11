@@ -84,7 +84,8 @@ class _Model:
 
         trace = self.refine(R0, hooks=[*hooks, _Collect()], is_eval=is_eval)
         trace.R0 = R0
-        return context, trace, (states if self.emits_trajectory else [])
+        # 방출 구조와 무관하게 항상 채운다 — anytime 은 `single` 에서도 필요하다.
+        return context, trace, states
 
     def emission_prefix(self, states, upto=None):
         if not self.emits_trajectory or not states:
@@ -266,3 +267,18 @@ def test_single_emission_injects_one_token():
     evaluate(model, _batches(1), decode=_decode, scorer=lambda p, g: True,
              anytime_batches=0)
     assert readout.injected == [1]
+
+
+def test_single_emission_still_gets_an_anytime_curve():
+    """대조군의 게이트 ②가 조용히 판정 불가가 되면 안 된다.
+
+    `single` 방출에서도 "사이클 m 에서 멈췄다면" 은 물을 수 있다 — v1 의 anytime
+    개념 그대로다. 방출 구조를 이유로 곡선을 비우면 두 조건의 ②를 비교할 수 없다.
+    """
+    readout = _Readout({}, ["42", "7"])
+    model = _Model(readout, M=3, emits_trajectory=False)
+    result = evaluate(model, _batches(1), decode=_decode,
+                      scorer=lambda p, g: True, anytime_batches=1)
+    assert set(result.anytime) == {0, 1, 2}
+    # 단일 방출이므로 사이클마다 토큰 **하나**씩이다.
+    assert readout.injected == [1, 1, 1, 1]

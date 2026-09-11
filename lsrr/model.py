@@ -23,20 +23,30 @@ from lsrr.core.invariants import EncodeCounter, assert_injection_space
 from lsrr.core.types import ContextBundle, ReasoningTrace
 
 
-class _TrajectoryCollector:
-    """사이클별 정제 상태를 모은다 — 궤적 방출의 입력 (ADR-015).
+class _CycleStateCollector:
+    """사이클별 정제 상태를 모은다.
+
+    두 곳이 쓴다: 궤적 방출의 입력(ADR-015)과 anytime 곡선(게이트 ②). **방출
+    구조와 무관하게 항상 모은다** — `single` 방출에서도 "사이클 m 에서 멈췄다면"
+    은 물을 수 있고, 안 모으면 대조군의 게이트 ②가 조용히 판정 불가가 된다.
 
     훅으로 받는 이유는 `recurrence` 가 방출 구조를 몰라야 하기 때문이다.
     사이클 축과 판독 축의 분리를 유지한다 (ADR-005).
+
+    Args:
+        detach: 그래프를 끊고 저장할지. 궤적 방출은 이 상태들을 통해 역전파하므로
+            끊으면 안 된다. 방출에 쓰지 않을 때(= `single`)는 반드시 끊는다 —
+            안 끊으면 쓰지도 않을 사이클 그래프를 전부 살려 둬 메모리만 먹는다.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, detach: bool = False) -> None:
+        self.detach = detach
         self.states: list[torch.Tensor] = []
 
     def on_cycle(
         self, m: int, R_m: torch.Tensor, R_next: torch.Tensor, diagnostics: Any
     ) -> None:
-        self.states.append(R_next)
+        self.states.append(R_next.detach() if self.detach else R_next)
 
 
 class LSRRModel(nn.Module):
@@ -234,16 +244,18 @@ class LSRRModel(nn.Module):
 
         Returns:
             `(context, trace, states)`. `states` 는 사이클 순서의 `R⁽¹⁾…R⁽ᴹ⁾` 이며
-            궤적 방출이 아니면 빈 목록이다. 접두는 `emission_prefix` 로 만든다.
+            **방출 구조와 무관하게 항상 채워진다** — anytime 곡선(②)이 `single`
+            조건에서도 필요하기 때문이다. 방출 접두는 `emission_prefix` 가 만들고,
+            거기서 `single` 이면 None 이 된다.
         """
         self.encode_counter.reset()
 
         context = self.encode(batch["input_ids"], batch.get("attention_mask"))
         R0 = self.build_memory(context)
 
-        # 궤적 방출이면 사이클별 상태를 모아야 한다 (ADR-015). 훅으로 모으므로
-        # runner 는 방출 구조를 모른다 — 축의 분리를 유지한다.
-        collector = _TrajectoryCollector() if self._emits_trajectory else None
+        # 사이클 상태는 **항상** 모은다: 궤적 방출(ADR-015)과 anytime 곡선(②)이
+        # 함께 쓴다. 방출에 안 쓸 때는 그래프를 끊어 메모리만 먹지 않게 한다.
+        collector = _CycleStateCollector(detach=not self._emits_trajectory)
         readout_hook = None
         if self._needs_per_cycle_readout:
             from lsrr.recurrence.hooks import ReadoutHook
@@ -258,8 +270,7 @@ class LSRRModel(nn.Module):
         all_hooks: list[Any] = list(hooks)
         if readout_hook is not None:
             all_hooks.append(readout_hook)
-        if collector is not None:
-            all_hooks.append(collector)
+        all_hooks.append(collector)
 
         trace = self.refine(R0, hooks=all_hooks, is_eval=is_eval, M=M)
         trace.R0 = R0
@@ -269,8 +280,7 @@ class LSRRModel(nn.Module):
             trace.supervised_cycles = readout_hook.supervised_cycles()
         trace.meta.setdefault("encode_count", self.encode_counter.count)
 
-        states = list(collector.states) if collector is not None else []
-        return context, trace, states
+        return context, trace, list(collector.states)
 
     def emission_prefix(
         self, states: Sequence[torch.Tensor], upto: Optional[int] = None
