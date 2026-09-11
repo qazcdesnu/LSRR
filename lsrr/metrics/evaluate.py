@@ -6,7 +6,7 @@
 | 산출 | 게이트 | 수집 방식 |
 |---|---|---|
 | `collapse` | ① | 마지막 배치의 `R*`·`R⁰`를 `analysis/collapse.py`로 진단 |
-| `anytime` | ② | 사이클별로 **생성**해 exact match — 최종 정확도와 같은 프로토콜 |
+| `anytime` | ② | 사이클 m 까지의 **궤적 접두**로 생성해 exact match — 최종과 같은 프로토콜 |
 | `accuracy` | ③ | 동적 종료로 얻은 `R*`에서 생성 |
 | `delta_trajectories` | ④ | 샘플별 Δ⁽ᵐ⁾ 궤적 |
 
@@ -24,7 +24,6 @@ import torch
 
 from lsrr.analysis.collapse import CollapseReport, diagnose
 from lsrr.core.errors import MissingTargetError
-from lsrr.core.types import ContextBundle, ReasoningTrace
 from lsrr.metrics.accuracy import match_final_number, match_free_form
 from lsrr.recurrence.hooks import DiagnosticsRecorder
 
@@ -84,18 +83,6 @@ class EvalResult:
         if self.delta_trajectories:
             payload["delta_trajectories"] = self.delta_trajectories
         return payload
-
-
-class _PerCycleStates:
-    """사이클별 `R⁽ᵐ⁾`를 모으는 훅. anytime 생성의 입력이다."""
-
-    def __init__(self, cycles: Optional[Sequence[int]] = None) -> None:
-        self.cycles = set(cycles) if cycles is not None else None
-        self.states: dict[int, torch.Tensor] = {}
-
-    def on_cycle(self, m: int, R_m: torch.Tensor, R_next: torch.Tensor, diagnostics: Any) -> None:
-        if self.cycles is None or m in self.cycles:
-            self.states[m] = R_next.detach()
 
 
 def _per_sample_deltas(recorder: DiagnosticsRecorder, batch_size: int) -> list[list[float]]:
@@ -165,23 +152,24 @@ def evaluate(
     collapse: Optional[CollapseReport] = None
 
     for idx, batch in enumerate(batches):
-        model.encode_counter.reset()
-        context: ContextBundle = model.encode(
-            batch["input_ids"], batch.get("attention_mask")
-        )
-        R0 = model.build_memory(context)
-
         recorder = DiagnosticsRecorder()
         want_anytime = idx < anytime_batches
-        states = _PerCycleStates() if want_anytime else None
-        hooks: list[Any] = [recorder] + ([states] if states else [])
 
-        trace: ReasoningTrace = model.refine(R0, hooks=hooks, is_eval=True)
-        trace.R0 = R0
+        # 앞 절반은 모델이 조립한다 — 여기서 다시 조립하면 방출 규칙이 갈라진다.
+        # 실제로 갈라져 있었다: `prefix` 를 넘기지 않아 **정확도를 단일 토큰
+        # 생성으로 재고 있었다** (F-031).
+        context, trace, cycle_states = model.rollout(
+            batch, is_eval=True, hooks=[recorder]
+        )
+        R0 = trace.R0
 
         answers = _gold_answers(batch)
         tokens = model.readout.generate(
-            trace.R_star, context.h_ctx, context, max_new_tokens=max_new_tokens
+            trace.R_star,
+            context.h_ctx,
+            context,
+            max_new_tokens=max_new_tokens,
+            prefix=model.emission_prefix(cycle_states),
         )
         batch_preds = decode(tokens)
         preds.extend(batch_preds)
@@ -197,11 +185,18 @@ def evaluate(
         if collect_deltas:
             trajectories.extend(_per_sample_deltas(recorder, len(answers)))
 
-        if want_anytime and states is not None:
+        if want_anytime and cycle_states:
             anytime_total += len(answers)
-            for m, R_m in states.states.items():
+            # "사이클 m 에서 멈췄다면" — 궤적의 앞 m+1개 토큰만 주입한다.
+            # 상태 하나만 넣으면 방출 구조가 아니라 **마지막 상태의 품질**을
+            # 재게 되어, 게이트 ②가 게이트 ③과 다른 것을 말한다.
+            for m, R_m in enumerate(cycle_states):
                 cycle_tokens = model.readout.generate(
-                    R_m, context.h_ctx, context, max_new_tokens=max_new_tokens
+                    R_m,
+                    context.h_ctx,
+                    context,
+                    max_new_tokens=max_new_tokens,
+                    prefix=model.emission_prefix(cycle_states, upto=m),
                 )
                 hits = sum(
                     scorer(p, g) for p, g in zip(decode(cycle_tokens), answers)

@@ -134,15 +134,49 @@ def test_the_trainer_does_not_assemble_its_own_forward():
     assert "self.model(" in body
 
 
-def test_forward_is_the_only_assembly_point_in_the_package():
-    """`lsrr/` 안에서 encode→refine→read 를 다시 조립하는 곳이 없어야 한다."""
+def test_rollout_is_the_only_assembly_point_in_the_package():
+    """`lsrr/` 안에서 encode→refine 을 다시 조립하는 곳이 없어야 한다.
+
+    첫 판에서는 `.refine(` 와 `.read(` 가 **함께** 있는 파일만 봤다. 그래서
+    `metrics/evaluate.py` 가 빠져나갔다 — 거기는 `.refine(` 과 `.generate(` 를
+    쓴다. 그리고 정확히 그 파일이 `prefix` 를 넘기지 않아 **정확도를 단일 토큰
+    생성으로 재고 있었다.** 그러니 판독 종류로 조건을 걸지 않는다: 정제 루프를
+    직접 부르는 것 자체가 조립이다.
+    """
     offenders = []
     for path in (REPO_ROOT / "lsrr").rglob("*.py"):
         if path.name == "model.py":
             continue
         text = path.read_text(encoding="utf-8")
-        if ".refine(" in text and ".read(" in text:
+        if ".refine(" in text or "build_memory(" in text:
             offenders.append(str(path.relative_to(REPO_ROOT)))
     assert not offenders, (
-        f"{offenders} 가 순전파를 따로 조립한다. 두 경로는 반드시 갈라진다 (F-031)."
+        f"{offenders} 가 순전파를 따로 조립한다. `model.rollout` 을 쓰라 (F-031)."
+    )
+
+
+def test_emission_prefix_is_the_only_interpreter_of_emission():
+    """방출 구조 해석이 여러 곳에 흩어지면 그중 하나가 반드시 틀린다."""
+    offenders = []
+    for path in (REPO_ROOT / "lsrr").rglob("*.py"):
+        if path.name in ("model.py", "path.py"):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "_emits_trajectory" in text or "emission ==" in text:
+            offenders.append(str(path.relative_to(REPO_ROOT)))
+    assert not offenders, (
+        f"{offenders} 가 방출 구조를 직접 해석한다. `model.emission_prefix` 를 쓰라."
+    )
+
+
+def test_evaluation_generates_from_the_full_trajectory():
+    """정확도를 단일 토큰 생성으로 재면 Ablation A 전체가 무의미해진다 (F-031)."""
+    import inspect
+
+    from lsrr.metrics import evaluate as ev
+
+    src = inspect.getsource(ev.evaluate)
+    assert "model.rollout(" in src, "평가가 순전파를 따로 조립한다"
+    assert src.count("emission_prefix(") >= 2, (
+        "최종 생성과 anytime 생성 **둘 다** 궤적 접두를 넘겨야 한다"
     )

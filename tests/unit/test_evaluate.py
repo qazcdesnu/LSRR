@@ -45,10 +45,14 @@ class _Readout:
         self.per_cycle = per_cycle
         self.final = final
         self.calls: list[Any] = []
+        self.injected: list[int] = []
 
-    def generate(self, R, h_ctx, context, max_new_tokens=None):
+    def generate(self, R, h_ctx, context, max_new_tokens=None, prefix=None):
         tag = int(R[0, 0, 0].item())
+        # 주입되는 사고 토큰 수 = 접두 + 마지막 상태. 궤적 생성인지 단일 생성인지
+        # 여기서 기록해야 "정확도를 단일 토큰으로 쟀다" 를 테스트가 잡는다 (F-031).
         self.calls.append(tag)
+        self.injected.append(len(prefix or []) + 1)
         texts = self.per_cycle.get(tag, self.final)
         return torch.tensor([[hash(t) % 100] for t in texts])
 
@@ -56,13 +60,37 @@ class _Readout:
 class _Model:
     """조립 없이 평가 흐름만 태우는 최소 스텁."""
 
-    def __init__(self, readout: _Readout, M: int = 3, batch_shapes=(2,)) -> None:
+    def __init__(self, readout: _Readout, M: int = 3, batch_shapes=(2,),
+                 emits_trajectory: bool = True) -> None:
         self.readout = readout
         self.encode_counter = _Counter()
         self.M = M
+        self.emits_trajectory = emits_trajectory
 
     def eval(self):
         return self
+
+    # `LSRRModel` 과 같은 계약을 스텁도 지켜야 한다 — 평가는 앞 절반을 모델에
+    # 맡기고 방출 해석도 모델에 묻는다 (F-031).
+    def rollout(self, batch, is_eval=False, hooks=(), M=None, readout_cycles=None):
+        self.encode_counter.reset()
+        context = self.encode(batch["input_ids"], batch.get("attention_mask"))
+        R0 = self.build_memory(context)
+        states: list[torch.Tensor] = []
+
+        class _Collect:
+            def on_cycle(self, m, R_m, R_next, diagnostics):
+                states.append(R_next)
+
+        trace = self.refine(R0, hooks=[*hooks, _Collect()], is_eval=is_eval)
+        trace.R0 = R0
+        return context, trace, (states if self.emits_trajectory else [])
+
+    def emission_prefix(self, states, upto=None):
+        if not self.emits_trajectory or not states:
+            return None
+        cut = len(states) - 1 if upto is None else int(upto)
+        return list(states[:cut]) or None
 
     def encode(self, input_ids, attention_mask=None):
         return _Ctx()
@@ -197,6 +225,9 @@ def test_anytime_uses_the_same_protocol_as_final_accuracy():
     assert set(result.anytime) == {0, 1, 2}
     # 사이클이 갈수록 좋아지는 스텁이므로 곡선이 올라야 한다.
     assert result.anytime[0] <= result.anytime[2]
+    # "사이클 m 에서 멈췄다면" = 궤적의 앞 m+1개 토큰. 전부 1이면 방출 구조가
+    # 아니라 마지막 상태의 품질을 잰 것이다 (F-031).
+    assert readout.injected == [3, 1, 2, 3]  # 최종(M=3) + 사이클 0·1·2
 
 
 def test_anytime_is_skipped_when_budget_is_zero():
@@ -217,3 +248,21 @@ def test_anytime_costs_m_generations_per_batch():
              anytime_batches=1)
     # 최종 1회 + 사이클 3회
     assert len(readout.calls) == 4
+
+
+def test_final_accuracy_is_generated_from_the_whole_trajectory():
+    """정확도를 단일 토큰 생성으로 재면 Ablation A 전체가 무의미해진다 (F-031)."""
+    readout = _Readout({}, ["42", "7"])
+    model = _Model(readout, M=4)
+    evaluate(model, _batches(1), decode=_decode, scorer=lambda p, g: True,
+             anytime_batches=0)
+    assert readout.injected == [4], "최종 생성이 궤적 전체를 주입하지 않았다"
+
+
+def test_single_emission_injects_one_token():
+    """`single` 조건은 대조군이다 — 여기서 궤적이 새면 절제가 무의미해진다."""
+    readout = _Readout({}, ["42", "7"])
+    model = _Model(readout, M=4, emits_trajectory=False)
+    evaluate(model, _batches(1), decode=_decode, scorer=lambda p, g: True,
+             anytime_batches=0)
+    assert readout.injected == [1]

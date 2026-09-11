@@ -216,33 +216,25 @@ class LSRRModel(nn.Module):
             or get_path(self.cfg, "objective.deep_supervision.enabled", False)
         )
 
-    def forward(
+    def rollout(
         self,
         batch: dict[str, Any],
         is_eval: bool = False,
         hooks: Sequence[CycleHook] = (),
         M: Optional[int] = None,
         readout_cycles: Optional[Sequence[int]] = None,
-    ) -> ReasoningTrace:
-        """전체 순전파 — **학습과 평가가 공유하는 유일한 경로다.**
+    ) -> tuple[ContextBundle, ReasoningTrace, list[torch.Tensor]]:
+        """순전파의 **판독 앞 절반** — encode → build_memory → refine → 상태 수집.
 
-        호출부가 순전파를 따로 조립하면 두 경로가 말없이 갈라진다. 실제로
-        그랬다 (F-031): 학습이 궤적 수집기를 붙이지 않아 사고 토큰을 1개만
-        방출하고, 평가는 M개를 방출했다 — `single` 로 학습하고 `trajectory` 로
-        평가한 셈이다. 그러므로 **여기 말고 다른 곳에서 encode→refine→read 를
-        조립하지 않는다.**
-
-        Args:
-            batch: 최소 `input_ids`. 학습 시 `labels`/`target_ids`.
-            is_eval: 동적 종료를 쓰는 평가 모드.
-            hooks: 추가 사이클 콜백 (진단 기록 등). 궤적 수집기와 판독 훅은
-                이 메서드가 직접 붙인다 — 붙이는 것을 잊는 것이 곧 F-031 이다.
-            M: 사이클 수를 고정한다. 깊은 감독이 TBPTT 윈도를 먼저 알아야 할 때
-                호출자가 뽑아 넘긴다 (ADR-006). 평가 경로에서는 무시된다.
-            readout_cycles: 판독할 사이클 인덱스. None 이면 전 사이클.
+        판독은 용도마다 다르다: 학습·NLL 은 teacher forcing(`forward`), 평가는
+        탐욕적 생성(`metrics/evaluate.py`). 하지만 **그 앞 절반과 방출 규칙은
+        같아야 한다.** 각자 조립하면 갈라진다 — 실제로 두 번 갈라졌다 (F-031):
+        학습이 궤적 수집기를 빠뜨려 토큰 1개만 방출했고, 평가는 `prefix` 를
+        넘기지 않아 정확도를 단일 토큰 생성으로 쟀다.
 
         Returns:
-            ReasoningTrace. 모듈 객체는 담지 않는다 (ADR-005).
+            `(context, trace, states)`. `states` 는 사이클 순서의 `R⁽¹⁾…R⁽ᴹ⁾` 이며
+            궤적 방출이 아니면 빈 목록이다. 접두는 `emission_prefix` 로 만든다.
         """
         self.encode_counter.reset()
 
@@ -272,24 +264,76 @@ class LSRRModel(nn.Module):
         trace = self.refine(R0, hooks=all_hooks, is_eval=is_eval, M=M)
         trace.R0 = R0
         trace.h_ctx = context.h_ctx
+        if readout_hook is not None:
+            trace.per_cycle_readout = readout_hook.results
+            trace.supervised_cycles = readout_hook.supervised_cycles()
+        trace.meta.setdefault("encode_count", self.encode_counter.count)
 
-        R_final = trace.R_star if trace.R_star is not None else R0
-        prefix = collector.states[:-1] if collector and collector.states else None
+        states = list(collector.states) if collector is not None else []
+        return context, trace, states
+
+    def emission_prefix(
+        self, states: Sequence[torch.Tensor], upto: Optional[int] = None
+    ) -> Optional[list[torch.Tensor]]:
+        """방출 접두 — **방출 구조를 해석하는 유일한 곳이다.**
+
+        Args:
+            states: `rollout` 이 돌려준 사이클 상태.
+            upto: 여기까지의 상태만 접두로 쓴다. anytime 곡선이 "사이클 m 에서
+                멈췄다면" 을 물을 때 쓴다. None 이면 마지막 직전까지 — 마지막
+                상태는 호출부가 `R` 로 넘기기 때문이다.
+
+        `single` 방출이면 항상 None 이다. 접두가 없으면 토큰 하나만 주입된다.
+        """
+        if not self._emits_trajectory or not states:
+            return None
+        cut = len(states) - 1 if upto is None else int(upto)
+        head = list(states[:cut])
+        return head or None
+
+    def forward(
+        self,
+        batch: dict[str, Any],
+        is_eval: bool = False,
+        hooks: Sequence[CycleHook] = (),
+        M: Optional[int] = None,
+        readout_cycles: Optional[Sequence[int]] = None,
+    ) -> ReasoningTrace:
+        """전체 순전파 — **학습과 평가가 공유하는 유일한 경로다.**
+
+        호출부가 순전파를 따로 조립하면 두 경로가 말없이 갈라진다. 실제로
+        그랬다 (F-031): 학습이 궤적 수집기를 붙이지 않아 사고 토큰을 1개만
+        방출하고, 평가는 M개를 방출했다 — `single` 로 학습하고 `trajectory` 로
+        평가한 셈이다. 그러므로 **여기 말고 다른 곳에서 encode→refine→read 를
+        조립하지 않는다.**
+
+        Args:
+            batch: 최소 `input_ids`. 학습 시 `labels`/`target_ids`.
+            is_eval: 동적 종료를 쓰는 평가 모드.
+            hooks: 추가 사이클 콜백 (진단 기록 등). 궤적 수집기와 판독 훅은
+                이 메서드가 직접 붙인다 — 붙이는 것을 잊는 것이 곧 F-031 이다.
+            M: 사이클 수를 고정한다. 깊은 감독이 TBPTT 윈도를 먼저 알아야 할 때
+                호출자가 뽑아 넘긴다 (ADR-006). 평가 경로에서는 무시된다.
+            readout_cycles: 판독할 사이클 인덱스. None 이면 전 사이클.
+
+        Returns:
+            ReasoningTrace. 모듈 객체는 담지 않는다 (ADR-005).
+        """
+        context, trace, states = self.rollout(
+            batch, is_eval=is_eval, hooks=hooks, M=M, readout_cycles=readout_cycles
+        )
+        R_final = trace.R_star if trace.R_star is not None else trace.R0
 
         readout = self.read(
             R_final,
             context,
             answer_ids=batch.get("target_ids"),
-            prefix=prefix,
+            prefix=self.emission_prefix(states),
         )
         trace.logits = readout.logits
         trace.h_fusion = readout.h_fusion
         trace.h_thought = readout.h_thought
         trace.alpha = readout.alpha
-        if readout_hook is not None:
-            trace.per_cycle_readout = readout_hook.results
-            trace.supervised_cycles = readout_hook.supervised_cycles()
-        trace.meta.setdefault("encode_count", self.encode_counter.count)
         return trace
 
     def __repr__(self) -> str:
