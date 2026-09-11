@@ -116,3 +116,24 @@ class HydraQSEngine(BaseRefinementEngine):
 - 레지스트리 키: `snake_case`, 논문 표기와 일치(`hydra_qs`, `delta_state`, `mlp_onepass`).
 - 런 ID: `<exp>_<engine>_<backbone>_<YYYYMMDD_HHMMSS>_s<seed>` (레거시 규약 계승).
 - 축 이름을 헷갈리게 쓰지 않는다: 레이어 축은 항상 `layer`/`l`, 사이클 축은 항상 `cycle`/`m`. `step`은 옵티마이저 스텝에만 쓴다.
+
+---
+
+## 8. 브랜치 규약
+
+| 브랜치 | 역할 |
+|---|---|
+| `main` | **공개 기준점.** 저장소를 처음 여는 사람이 보는 코드. 항상 동작하고 테스트가 통과하는 상태 |
+| `v1.1` | 개발 브랜치. 일상 작업은 전부 여기서 한다 |
+| `v1.0` | 레거시 보존 (백본 연속 디코딩 이전 구조). 참조 전용, 커밋하지 않는다 |
+
+- **작업은 `v1.1` 에 커밋한다.** `main` 에 직접 커밋하지 않는다.
+- **`main` 병합은 큰 진전마다 한다** — 마일스톤 완료, 게이트 판정, 아키텍처 결정(ADR 확정)처럼 "밖에서 볼 만한" 시점이다. 커밋 단위로 따라가지 않는다.
+- 병합은 fast-forward 를 기본으로 한다. `v1.1` 이 `main` 의 후손인 한 이력 손실도 force push 도 없다:
+
+  ```bash
+  git merge-base --is-ancestor origin/main origin/v1.1   # 먼저 확인
+  git push origin origin/v1.1:refs/heads/main
+  ```
+
+- **버전 브랜치는 지우지 않는다.** `v1.0` 의 이력은 `main` 안에도 있지만, 이름이 붙어 있어야 "그때 그 구조" 를 지목할 수 있다 — LEGACY_MAP.md 가 참조하는 대상이기도 하다.
