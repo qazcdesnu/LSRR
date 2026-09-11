@@ -34,7 +34,7 @@ import torch
 from lsrr.builder import build_slots
 from lsrr.config import load_config
 from lsrr.config.schema import get_path
-from lsrr.data import PromptEncoder, PromptSpec
+from lsrr.data import PromptEncoder, prompt_spec_from_cfg
 from lsrr.data.collate import make_loader
 from lsrr.metrics.evaluate import evaluate, scorer_for
 from lsrr.model import LSRRModel
@@ -72,10 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("[평가] 경고: 체크포인트 없이 초기 가중치를 평가한다.")
 
-    spec = PromptSpec(
-        max_question_tokens=int(get_path(cfg, "prompt.max_question_tokens", 256)),
-        max_answer_tokens=int(get_path(cfg, "prompt.max_answer_tokens", 32)),
-    )
+    spec = prompt_spec_from_cfg(cfg)
     encoder = PromptEncoder(bundle.encoder.tokenizer, spec)
     samples = bundle.data.get_split(args.split)
     if args.limit:

@@ -1,0 +1,87 @@
+# Ablation A (ProsQA) — 사고 토큰 방출 구조 (v2.1 §7.1-1)
+#
+# v2 의 최소 주장이자 **킬 스위치** (ADR-016):
+#   "궤적을 시퀀스로 방출하는 것이 단일 벡터로 접는 것보다 낫다"
+#
+# 무대가 곱셈에서 ProsQA 로 바뀐 이유: §2.2 는 단일 벡터 압축의 병목 근거로
+# "다중 홉에서 파생되는 다수의 브리지 엔티티"를 들고, §7.1-1 의 가설은
+# "3-hop 이상에서 급격한 저하"를 예측한다. 곱셈은 계산 깊이 과제라 브리지
+# 엔티티가 생기지 않아 이 가설을 **검증할 수 없다**. ProsQA 는 샘플마다 홉 수가
+# 라벨로 붙으므로 같은 런에서 §7.2 의 "홉이 많을수록 오래 생각한다"도 본다.
+#
+# 세 조건이 기존 축들의 조합으로 표현된다 — 별도 코드 경로가 없다 (ADR-009).
+#
+#   조건          emission    termination   anchor
+#   single_v1     single      delta_state   ctx    ← 대조군
+#   fixed_k       trajectory  fixed_m(=4)   first
+#   dynamic_m     trajectory  delta_state   first  ← v2 기본
+#
+# **대조군의 앵커는 ctx 다.** v1 은 잔차 융합이 유효했고 실측으로 작동이
+# 확인된 설계이므로(F-009), 대조군까지 바꾸면 이 절제가 "방출 구조 비교"가
+# 아니라 "융합식 비교"로 오염된다 (ADR-015).
+defaults: [base, backbone/gpt2, data/prosqa]
+
+memory:
+  adapter:
+    d_model: 256
+
+engine:
+  type: hydra_qs
+  d_state: 16
+  n_blocks: 2
+
+recurrence:
+  schedule: {type: lognormal, mean: 5, max: 8}
+  tbptt_k: 4
+
+termination:
+  type: delta_state
+  eps: 0.05
+  m: 4            # fixed_m 조건이 쓴다. delta_state 는 무시한다
+  m_min: 1
+  m_max: 8
+
+readout:
+  path:
+    emission: trajectory
+    max_new_tokens: 12
+  fusion:
+    anchor: first
+
+train:
+  epochs: 5
+  bs: 8           # 질문 최대 626 토큰 — 곱셈의 bs=16 은 16GB 에 안 들어간다
+  lr: 1.0e-3
+  log_every: 100
+
+eval:
+  max_new_tokens: 12
+
+# 게이트 ③ 은 조건당 시드 5개를 요구한다 (검정력 부족 방지).
+gates:
+  phase0:
+    min_seeds: 5
+
+# ─────────────────────────────────────────────────────────────────────────
+# 스윕 — 3조건 × 5시드 = 15런. 인덱스로 주소지정되므로 slurm 배열이 그대로 붙는다:
+#
+#   sbatch --array=0-14 scripts/slurm/sweep_array.sh exp=ablation/A_emission_prosqa
+#
+# `condition` 은 설정 경로가 아니라 **묶음 축의 이름표**다. 세 조건은 세 키의
+# 특정 조합으로만 성립하며, 축을 따로 두면 데카르트 곱 8가지 중 존재하지 않는
+# 조건 5가지가 생긴다.
+sweep:
+  condition:
+    - name: single_v1
+      readout.path.emission: single
+      termination.type: delta_state
+      readout.fusion.anchor: ctx
+    - name: fixed_k
+      readout.path.emission: trajectory
+      termination.type: fixed_m
+      readout.fusion.anchor: first
+    - name: dynamic_m
+      readout.path.emission: trajectory
+      termination.type: delta_state
+      readout.fusion.anchor: first
+  seed: [0, 1, 2, 3, 4]

@@ -86,3 +86,55 @@ def test_multiplication_is_deterministic():
     assert [s.question for s in a.get_split("val")] == [
         s.question for s in b.get_split("val")
     ]
+
+
+# ------------------------------------------------------- 질문 절단 방향
+
+
+def test_long_questions_keep_their_tail(gpt2_backbone):
+    """**질의는 언제나 꼬리에 있다.**
+
+    ProsQA 질문은 전제 수십 줄 뒤에 "Is Sally a hilpus or sterpus?"가 붙는다.
+    오른쪽에서 자르면 물음 자체가 사라져 과제가 풀 수 없는 것이 되고, 좌측 패딩
+    규약(ADR-011)이 보장하려던 "마지막 실토큰 = 질문의 끝"도 함께 깨진다.
+    """
+    from lsrr.data import PromptEncoder, PromptSpec
+
+    sample = DataSample(
+        question="A B C D E F G H I J Is Sally a hilpus or sterpus?", answer="yes"
+    )
+    encoder = PromptEncoder(
+        gpt2_backbone.tokenizer, PromptSpec(max_question_tokens=8)
+    )
+    kept = gpt2_backbone.tokenizer.decode(
+        encoder.encode_questions([sample])["input_ids"][0]
+    )
+    assert "sterpus" in kept and "A B C" not in kept
+
+
+def test_truncation_side_is_restored_on_the_shared_tokenizer(gpt2_backbone):
+    """토크나이저는 세션 공유물이다 — 속성을 바꾼 채로 두면 옆 호출이 오염된다."""
+    from lsrr.data import PromptEncoder, PromptSpec
+
+    tokenizer = gpt2_backbone.tokenizer
+    before = tokenizer.truncation_side
+    PromptEncoder(tokenizer, PromptSpec(max_question_tokens=4)).encode_questions(
+        [DataSample(question="a b c d e f g h", answer="x")]
+    )
+    assert tokenizer.truncation_side == before
+
+
+def test_prompt_spec_is_assembled_in_one_place():
+    """train/eval/진단이 저마다 조립하면 키 하나가 한 곳에만 반영된다."""
+    from omegaconf import OmegaConf
+
+    from lsrr.data import prompt_spec_from_cfg
+
+    spec = prompt_spec_from_cfg(
+        OmegaConf.create(
+            {"prompt": {"max_question_tokens": 640, "question_truncation_side": "left"}}
+        )
+    )
+    assert spec.max_question_tokens == 640
+    assert spec.question_truncation_side == "left"
+    assert spec.max_answer_tokens == 32  # 기본값은 그대로

@@ -1,0 +1,42 @@
+# ProsQA 정식 단일 런 — GPT-2 + hydra_qs + 궤적 방출 (v2.1 기본 구성)
+#
+# Ablation A 스윕(configs/ablation/A_emission_prosqa.yaml)의 `dynamic_m` 조건과
+# 같은 설정이다. 스윕을 걸기 전에 "파이프라인이 ProsQA 를 배우는가"를 한 런으로
+# 확인하는 용도이며, 확인 뒤에는 스윕이 이 설정을 조건별로 변주한다.
+defaults: [base, backbone/gpt2, data/prosqa]
+
+memory:
+  adapter:
+    d_model: 256          # L×d_in×d_model = 12×768×256 ≈ 2.4M (백본의 1.9%)
+
+engine:
+  type: hydra_qs
+  d_state: 16
+  n_blocks: 2
+
+recurrence:
+  schedule: {type: lognormal, mean: 5, max: 8}
+  tbptt_k: 4
+
+termination:
+  type: delta_state
+  eps: 0.05
+  m_min: 1
+  m_max: 8
+
+readout:
+  path:
+    emission: trajectory
+    max_new_tokens: 12    # 정답이 한 문장이다. 32 는 EOS 뒤 잡음만 늘린다
+  fusion:
+    anchor: first
+
+train:
+  epochs: 5
+  # 질문이 길다(최대 626 토큰). 곱셈의 bs=16 을 그대로 쓰면 16GB 에 안 들어간다.
+  bs: 8
+  lr: 1.0e-3
+  log_every: 100
+
+eval:
+  max_new_tokens: 12

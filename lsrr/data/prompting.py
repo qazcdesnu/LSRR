@@ -13,6 +13,7 @@ from typing import Any, Optional, Sequence
 
 import torch
 
+from lsrr.config.schema import get_path
 from lsrr.core.errors import LeakageError
 from lsrr.core.invariants import IGNORE_INDEX
 from lsrr.core.types import DataSample
@@ -28,6 +29,12 @@ class PromptSpec:
         max_question_tokens: 질문 절단 길이.
         max_answer_tokens: 정답 절단 길이.
         append_eos: 정답 끝에 EOS를 붙일지. 생성 종료 학습에 필요하다.
+        question_truncation_side: 한도를 넘는 질문을 어느 쪽에서 자를지.
+            기본은 `"left"` — **질의는 언제나 꼬리에 있다**. ProsQA 질문은 전제
+            수십 줄 뒤에 `"Is Sally a hilpus or sterpus?"`가 붙고 GSM8K도 서술
+            뒤에 물음이 온다. 오른쪽에서 자르면 물음 자체가 사라져 과제가 풀 수
+            없는 것이 되고, 좌측 패딩 규약(ADR-011)이 보장하려던 "마지막 실토큰
+            = 질문의 끝"도 함께 깨진다.
     """
 
     question_template: str = "{question}"
@@ -35,6 +42,7 @@ class PromptSpec:
     max_question_tokens: int = 256
     max_answer_tokens: int = 32
     append_eos: bool = True
+    question_truncation_side: str = "left"
 
     def render_question(self, sample: DataSample) -> str:
         return self.question_template.format(question=sample.question)
@@ -63,14 +71,20 @@ class PromptEncoder:
     ) -> dict[str, torch.Tensor]:
         """좌측 패딩된 질문 배치 → {input_ids, attention_mask}."""
         texts = [self.spec.render_question(s) for s in samples]
-        enc = self.tokenizer(
-            texts,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=self.spec.max_question_tokens,
-            padding_side="left",
-        )
+        # truncation_side는 `__call__` 인자가 아니라 토크나이저 속성이다.
+        saved = self.tokenizer.truncation_side
+        self.tokenizer.truncation_side = self.spec.question_truncation_side
+        try:
+            enc = self.tokenizer(
+                texts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=self.spec.max_question_tokens,
+                padding_side="left",
+            )
+        finally:
+            self.tokenizer.truncation_side = saved
         out = {"input_ids": enc["input_ids"], "attention_mask": enc["attention_mask"]}
         return {k: v.to(device) for k, v in out.items()} if device else out
 
@@ -136,6 +150,22 @@ class PromptEncoder:
         return texts
 
 
+def prompt_spec_from_cfg(cfg: Any) -> PromptSpec:
+    """설정의 `prompt:` 절 → PromptSpec.
+
+    train/eval/진단 스크립트가 저마다 PromptSpec을 조립하면 키 하나가 한 곳에만
+    반영되는 사고가 난다 (max_question_tokens가 그랬다). 조립은 여기 한 곳이다.
+    """
+    return PromptSpec(
+        max_question_tokens=int(get_path(cfg, "prompt.max_question_tokens", 256)),
+        max_answer_tokens=int(get_path(cfg, "prompt.max_answer_tokens", 32)),
+        append_eos=bool(get_path(cfg, "prompt.append_eos", True)),
+        question_truncation_side=str(
+            get_path(cfg, "prompt.question_truncation_side", "left")
+        ),
+    )
+
+
 def assert_no_answer_text_leakage(
     samples: Sequence[DataSample], spec: PromptSpec
 ) -> None:
@@ -155,4 +185,9 @@ def assert_no_answer_text_leakage(
             )
 
 
-__all__ = ("PromptSpec", "PromptEncoder", "assert_no_answer_text_leakage")
+__all__ = (
+    "PromptSpec",
+    "PromptEncoder",
+    "prompt_spec_from_cfg",
+    "assert_no_answer_text_leakage",
+)

@@ -1,0 +1,18 @@
+# ProsQA — 홉 수가 라벨로 붙은 다중 홉 추론 (제안서 §6.1)
+#
+# 출처: facebookresearch/coconut 의 data/prosqa_{train,valid,test}.json.
+# 저장소에 포함하지 않는다 — data/ 는 .gitignore 대상이다.
+data:
+  type: prosqa
+  data_dir: data/prosqa
+  # sizes / min_hops / max_hops 는 기본 없음 = 전량(train 17,886 / val 300 / test 500).
+
+prompt:
+  # 질문 토큰 길이: 평균 360, p95 459, **최대 626**(train). 한도를 이보다 낮게
+  # 잡으면 질문이 잘리는데, ProsQA 는 전제 수십 줄 **뒤에** 실제 질의
+  # ("Is Sally a hilpus or sterpus?")가 온다. 왼쪽에서 자르는 것이 기본인 이유다
+  # (PromptSpec.question_truncation_side). 640 이면 어떤 표본도 잘리지 않는다.
+  max_question_tokens: 640
+  question_truncation_side: left
+  # 정답은 "Sally is a sterpus." 한 문장 — 평균 7.2, 최대 9 토큰. EOS 자리 포함 12.
+  max_answer_tokens: 12

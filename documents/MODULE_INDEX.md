@@ -60,7 +60,7 @@
 | `schema.py` | 설정 트리의 타입 스키마 | 검증 |
 | `loader.py` | 계층 defaults 해석 + CLI dotlist 병합 | 검증 |
 | `validate.py` | 교차 필드 검증 (로드 시점 실패) | 검증 |
-| `sweep.py` | 데카르트 곱 전개, 자식 런 명명 | 검증 |
+| `sweep.py` | 데카르트 곱 전개, 묶음 축, 인덱스 주소지정(slurm 배열) | 검증 |
 | `snapshot.py` | 해석 완료 설정 덤프 + 설정 해시(런 신원) | 검증 |
 
 ## `lsrr/backbone/` — 동결 백본
@@ -158,7 +158,7 @@
 | `download.py` | 데이터 획득 + SHA-256 검증 | 계획 |
 | `datasets/gsm8k_aug.py` | 주 학습·ID 평가 | 계획 |
 | `datasets/math_ood.py` | GSM-Hard / MultiArith / SVAMP (평가 전용) | 계획 |
-| `datasets/prosqa.py` | 홉 수 통제, 메커니즘 분석 주 무대 | 계획 |
+| `datasets/prosqa.py` | 홉 수 통제, 메커니즘 분석 주 무대. `meta["hops"]` 로 층화 | 검증 |
 | `datasets/prontoqa.py` | 홉 수 통제 보조 | 계획 |
 | `datasets/multiplication.py` | 다자리 곱셈 합성 (용량 확장 검증) | 검증 |
 | `datasets/commonsenseqa.py` | 비수학 일반성 (CODI 공개 CoT) | 계획 |
@@ -231,11 +231,13 @@
 | `extract_h.py` | H 캐시 사전 추출 (보조 경로) | 계획 |
 | `train.py` | 학습. `--runs-dir` 플래그, `RUN_DIR=` 기계 판독 출력 | 검증 |
 | `eval.py` | 평가 → `metrics.json`·`gate_inputs.json`. 종료 규칙 스윕은 M6 | 검증 |
-| `sweep.py` | 조건 × 시드 스윕 → train+eval 연쇄. 판정은 하지 않는다 | 검증 |
+| `sweep.py` | **YAML 주도** 스윕 → train+eval 연쇄. `--index` 로 slurm 배열 1:1. 판정은 하지 않는다 | 검증 |
 | `eval_backbone_direct.py` | No-CoT 백본 직접 평가 (하한) | 계획 |
 | `profile_cost.py` | FLOPs·지연 프로파일 | 계획 |
 | `analyze.py` | 분석 플러그인 실행 | 계획 |
 | `diagnose_injection.py` | **주입 통로 진단** — 개입 비교로 질문별 학습을 판정 (F-010) | 검증 |
 | `diagnose_trajectory.py` | **궤적 분화 진단** — ADR-015 선행 관문. 토큰 분화 + 토큰별 기여 (F-026) | 검증 |
+| `diagnose_state_scale.py` | **상태 스케일 진단** — Δ 자릿수와 β 포화. §4.3 의 고정 ε 전제 확인 (F-028) | 검증 |
+| `slurm/sweep_array.sh`·`slurm/submit.sh` | 배열 작업 제출. 배열 크기는 설정에서 읽는다 | 검증 |
 | `check_gates.py` | 단계 게이트 판정 | 검증 |
 | `make_report.py` | 표·그림 생성 | 계획 |

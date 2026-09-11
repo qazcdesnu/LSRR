@@ -34,7 +34,7 @@ from lsrr.builder import build_slots
 from lsrr.config import load_snapshot
 from lsrr.config.schema import get_path
 from lsrr.core.invariants import IGNORE_INDEX
-from lsrr.data import PromptEncoder, PromptSpec
+from lsrr.data import PromptEncoder, prompt_spec_from_cfg
 from lsrr.data.collate import make_loader
 from lsrr.model import LSRRModel
 from lsrr.runtime import load_checkpoint
@@ -53,10 +53,7 @@ def _load(run_dir: Path, checkpoint: str | None):
 
 
 def _batches(cfg, bundle, split: str, limit: int, batch_size: int):
-    spec = PromptSpec(
-        max_question_tokens=int(get_path(cfg, "prompt.max_question_tokens", 256)),
-        max_answer_tokens=int(get_path(cfg, "prompt.max_answer_tokens", 32)),
-    )
+    spec = prompt_spec_from_cfg(cfg)
     encoder = PromptEncoder(bundle.encoder.tokenizer, spec)
     samples = bundle.data.get_split(split)[:limit]
     loader = make_loader(samples, encoder, batch_size=batch_size)

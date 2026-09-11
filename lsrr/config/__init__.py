@@ -18,7 +18,7 @@ from lsrr.config.snapshot import (
     run_metadata,
     save_snapshot,
 )
-from lsrr.config.sweep import expand_sweep, sweep_size
+from lsrr.config.sweep import SweepChild, expand_sweep, sweep_plan, sweep_size
 from lsrr.config.validate import validate_config
 
 __all__ = (
@@ -29,6 +29,8 @@ __all__ = (
     "resolve_hierarchical",
     "validate_config",
     "expand_sweep",
+    "sweep_plan",
+    "SweepChild",
     "sweep_size",
     "config_hash",
     "make_run_id",

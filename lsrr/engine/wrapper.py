@@ -1,6 +1,6 @@
-"""정제 갱신식의 유일한 소유자 (제안서 §4.2).
+"""정제 갱신식의 유일한 소유자 (제안서 §4.2, ADR-017).
 
-    R^(m+1) = (1-α)·R^(m) + α·S_φ(R^(m), R⁰, m)
+    R^(m+1) = Norm( (1-α)·R^(m) + α·S_φ(R^(m), R⁰, m) )
 
 **재귀 적응 장치 3종** (§4.2): 감쇠 갱신(진동 억제), 입력 재주입 R⁰(원 문맥
 표류 방지), 사이클 임베딩 m(반복 단계 조건화).
@@ -23,6 +23,30 @@ from lsrr.core.interfaces import BaseRefinementEngine
 from lsrr.memory.adapters import RMSNorm
 
 ReinjectMode = Literal["none", "add", "concat", "gate"]
+StateNorm = Literal["none", "rmsnorm", "layernorm"]
+
+
+class _ScaleOnly(nn.Module):
+    """게인 없는 정규화.
+
+    학습 가능한 이득을 두면 그것이 자라서 폭주가 재현된다 — 코어 진입 전
+    정규화가 이미 그렇게 뚫렸다 (F-028). 상태 carry 에는 게인이 없어야 한다.
+    """
+
+    def __init__(self, mode: str, eps: float = 1e-6) -> None:
+        super().__init__()
+        self.mode = mode
+        self.eps = eps
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        f = x.float()
+        if self.mode == "layernorm":
+            f = f - f.mean(-1, keepdim=True)
+        scale = f.pow(2).mean(-1, keepdim=True).add(self.eps).rsqrt()
+        return (f * scale).to(x.dtype)
+
+    def extra_repr(self) -> str:
+        return f"mode={self.mode}"
 
 
 class EngineWrapper(BaseRefinementEngine):
@@ -38,6 +62,12 @@ class EngineWrapper(BaseRefinementEngine):
         cycle_embedding: 사이클 인덱스 조건화 여부.
         reinject_r0: R⁰ 재주입 방식.
         norm_type: 코어 진입 전 정규화.
+        state_norm: 갱신 **뒤** 상태 정규화 (ADR-017). 코어의 입력은 원래도
+            정규화돼 있었지만 carry 되는 상태는 아니었고, 상태 RMS 가 학습
+            250스텝 만에 10¹⁴ 배로 갔다 (F-028). 손실은 판독의 RMS 보정 때문에
+            `R` 의 상수배에 불변이라 ‖R‖ 을 묶을 기울기 압력이 없다.
+            §4.3 의 **고정** ε 은 스케일이 비교 가능할 때만 뜻이 있으므로
+            기본은 `rmsnorm` 이다. `none` 이 v2.1 원문 거동이며 Ablation D 축이다.
     """
 
     def __init__(
@@ -49,6 +79,7 @@ class EngineWrapper(BaseRefinementEngine):
         cycle_embedding: bool = True,
         reinject_r0: ReinjectMode = "gate",
         norm_type: str = "rmsnorm",
+        state_norm: StateNorm = "rmsnorm",
         **_: Any,
     ) -> None:
         super().__init__()
@@ -56,6 +87,11 @@ class EngineWrapper(BaseRefinementEngine):
             raise ValueError(f"damping_alpha는 (0, 1] 범위여야 한다: {damping_alpha}")
         if reinject_r0 not in ("none", "add", "concat", "gate"):
             raise ValueError(f"reinject_r0 '{reinject_r0}'를 모른다.")
+        if state_norm not in ("none", "rmsnorm", "layernorm"):
+            raise ValueError(
+                f"engine.state_norm '{state_norm}'를 모른다. "
+                f"가능: none/rmsnorm/layernorm (ADR-017)."
+            )
 
         self.core = core
         self.d_model = d_model
@@ -76,6 +112,10 @@ class EngineWrapper(BaseRefinementEngine):
 
         self.norm = (
             nn.LayerNorm(d_model) if norm_type == "layernorm" else RMSNorm(d_model)
+        )
+        self.state_norm_type = state_norm
+        self.state_norm = (
+            None if state_norm == "none" else _ScaleOnly(state_norm)
         )
 
     def forward_step(
@@ -99,13 +139,17 @@ class EngineWrapper(BaseRefinementEngine):
             x = (1.0 - g) * x + g * R0
 
         f = self.core(self.norm(x))
-        return (1.0 - self.damping_alpha) * R_m + self.damping_alpha * f
+        R_next = (1.0 - self.damping_alpha) * R_m + self.damping_alpha * f
+        # 갱신 **뒤** 정규화 (ADR-017). 없으면 Δ 가 학습 중 자릿수를 바꿔
+        # §4.3 의 고정 ε 이 무의미해지고, β = softmax(w_pool·r_l) 가 포화한다.
+        return R_next if self.state_norm is None else self.state_norm(R_next)
 
     def extra_repr(self) -> str:
         return (
             f"d_model={self.d_model}, alpha={self.damping_alpha}, "
-            f"reinject={self.reinject_r0}, cycle_emb={self.cycle_emb is not None}"
+            f"reinject={self.reinject_r0}, cycle_emb={self.cycle_emb is not None}, "
+            f"state_norm={self.state_norm_type}"
         )
 
 
-__all__ = ("EngineWrapper", "ReinjectMode")
+__all__ = ("EngineWrapper", "ReinjectMode", "StateNorm")

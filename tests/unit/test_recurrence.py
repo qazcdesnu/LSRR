@@ -43,13 +43,20 @@ class _Oscillating(nn.Module):
         return -x
 
 
-def _engine(core: nn.Module, alpha: float = 1.0) -> EngineWrapper:
+def _engine(core: nn.Module, alpha: float = 1.0,
+            state_norm: str = "none") -> EngineWrapper:
+    """갱신식 자체를 보는 테스트용 — 상태 정규화는 기본으로 끈다.
+
+    ADR-017 의 정규화는 갱신식 **뒤에** 붙으므로, 켜 두면 `(1-α)R + α·S` 를
+    직접 확인할 수 없다. 정규화 자체는 아래 ADR-017 절에서 따로 본다.
+    """
     return EngineWrapper(
         core=core,
         d_model=D,
         damping_alpha=alpha,
         cycle_embedding=False,
         reinject_r0="none",
+        state_norm=state_norm,
     )
 
 
@@ -205,7 +212,7 @@ def test_runner_rejects_rule_without_fallback():
 
 
 def test_damped_update_matches_proposal_formula():
-    """R^(m+1) = (1-α)R^(m) + α·S(R^(m)) — §4.2."""
+    """R^(m+1) = (1-α)R^(m) + α·S(R^(m)) — §4.2 (정규화 전)."""
     alpha = 0.25
     engine = _engine(_Contracting(0.0), alpha=alpha)  # S(x) = 0
     R = torch.randn(B, L, D)
@@ -233,3 +240,64 @@ def test_cycle_embedding_conditions_on_m():
     torch.nn.init.normal_(engine.cycle_emb.weight, std=1.0)
     R = torch.randn(B, L, D)
     assert not torch.allclose(engine.forward_step(R, R, 0), engine.forward_step(R, R, 1))
+
+
+# ------------------------------------------------- ADR-017 상태 정규화
+
+
+class _Exploding(nn.Module):
+    """출력이 입력보다 훨씬 큰 코어 — 학습이 실제로 만드는 상황이다 (F-028)."""
+
+    def __init__(self, factor: float = 1e6) -> None:
+        super().__init__()
+        self.factor = factor
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x * self.factor
+
+
+def test_state_norm_bounds_the_scale_an_exploding_core_would_reach():
+    """손실이 `R` 의 스케일에 불변이라 폭주를 막을 기울기 압력이 없다 (F-028).
+
+    코어가 10⁶ 배로 키워도 carry 되는 상태는 RMS 1 부근이어야 한다 — 그래야
+    §4.3 의 **고정** ε 이 학습 내내 같은 뜻을 갖는다.
+    """
+    R = torch.randn(B, L, D)
+    guarded = _engine(_Exploding(), alpha=1.0, state_norm="rmsnorm")
+    bare = _engine(_Exploding(), alpha=1.0, state_norm="none")
+
+    out = guarded.forward_step(R, R, 0)
+    assert float(out.detach().pow(2).mean().sqrt()) == pytest.approx(1.0, abs=0.05)
+    assert float(bare.forward_step(R, R, 0).detach().pow(2).mean().sqrt()) > 1e3
+
+
+def test_state_norm_survives_repeated_cycles():
+    """한 사이클이 아니라 M 사이클 뒤에도 묶여 있어야 한다."""
+    engine = _engine(_Exploding(10.0), alpha=0.8, state_norm="rmsnorm")
+    R = torch.randn(B, L, D)
+    for m in range(16):
+        R = engine.forward_step(R, R, m)
+    assert float(R.detach().pow(2).mean().sqrt()) == pytest.approx(1.0, abs=0.05)
+
+
+def test_state_norm_has_no_learnable_gain():
+    """게인을 두면 그것이 자라 같은 폭주가 재현된다 (ADR-017)."""
+    engine = _engine(nn.Identity(), state_norm="rmsnorm")
+    assert list(engine.state_norm.parameters()) == []
+
+
+def test_state_norm_none_is_the_v2_1_text_behaviour():
+    """원문 거동을 Ablation D 축으로 남겨 둔다 — 기본값만 바뀐다."""
+    engine = _engine(nn.Identity(), state_norm="none")
+    assert engine.state_norm is None
+
+
+def test_unknown_state_norm_is_rejected_at_construction():
+    with pytest.raises(ValueError, match="state_norm"):
+        _engine(nn.Identity(), state_norm="batchnorm")
+
+
+def test_state_norm_defaults_to_on():
+    """ADR-017 의 기본값. 끄려면 설정에 명시해야 한다."""
+    engine = EngineWrapper(core=nn.Identity(), d_model=D)
+    assert engine.state_norm is not None

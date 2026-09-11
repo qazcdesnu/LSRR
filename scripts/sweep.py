@@ -1,10 +1,21 @@
 #!/usr/bin/env python
-"""스윕 — 조건 × 시드를 돌려 Phase 0 게이트 판정 데이터를 만든다.
+"""스윕 — 설정의 `sweep:` 절을 전개해 조건 × 시드를 돌린다.
 
-게이트 ③은 킬 스위치이고 **조건당 시드 3개 이상**을 요구한다 (F-016). 손으로
-6런을 돌리면 조건 하나를 빠뜨리거나 시드를 섞기 쉬우므로, 조합을 코드가 만든다.
+**조합은 YAML이 정의한다.** 조건을 CLI 플래그로 받으면 실제로 돌린 조합이
+설정 파일에 남지 않아, 나중에 같은 실험을 재현하려면 셸 히스토리를 뒤져야 한다.
+그래서 이 스크립트에는 `--engines`/`--seeds` 가 없다. 시드조차 `sweep:` 축이다.
 
-각 자식 런은 `train → eval` 을 이어서 돌고, 다음을 남긴다.
+    sweep:
+      readout.path.emission: [trajectory, single]
+      seed: [0, 1, 2, 3, 4]
+
+전개는 **인덱스로 주소지정 가능**하다. `--index K` 는 K번째 자식 하나만 돌리므로
+slurm 배열 작업이 그대로 붙는다.
+
+    sbatch --array=0-$(( $(python scripts/sweep.py exp=... --count) - 1 )) job.sh
+    # job.sh 안: python scripts/sweep.py exp=... --index $SLURM_ARRAY_TASK_ID
+
+각 자식 런은 `train → eval` 을 이어서 돌고 다음을 남긴다.
 
     runs/<run_id>/checkpoints/last.pt
     runs/<run_id>/metrics.json       accuracy 등          ← 게이트 ③
@@ -12,41 +23,51 @@
 
 **스윕은 판정하지 않는다.** 판정은 `scripts/check_gates.py`의 일이며, 이 경계를
 지켜야 "돌리면서 기준을 조정하는" 일이 구조적으로 불가능해진다 (ADR-008).
-스윕이 끝나면 판정 명령을 출력한다.
 
 사용:
-    # 설정의 sweep: 절을 전개 (예: configs/ablation/C_engine.yaml)
-    python scripts/sweep.py exp=ablation/C_engine --seeds 0,1,2
-
-    # Phase 0 킬 스위치용 최소 조합 — 명시 지정
-    python scripts/sweep.py exp=phase0_mult \\
-        --engines hydra_qs,mlp_onepass --seeds 0,1,2
-
-    python scripts/sweep.py ... --dry-run       # 조합만 출력
-    python scripts/sweep.py ... --skip-existing # 이미 끝난 조합 건너뛰기
+    python scripts/sweep.py exp=ablation/A_emission --list    # 조합 확인
+    python scripts/sweep.py exp=ablation/A_emission --count   # 조합 수만
+    python scripts/sweep.py exp=ablation/A_emission           # 전부 순차 실행
+    python scripts/sweep.py exp=ablation/A_emission --index 3 # 3번 자식만
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from lsrr.config import load_config
-from lsrr.config.schema import get_path
-from lsrr.config.sweep import expand_sweep
+from lsrr.config.sweep import SweepChild, sweep_plan
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+#: YAML로 옮겨 간 옛 플래그. 조용히 무시하면 "돌렸다고 생각한 조합"과 실제가
+#: 갈리므로, 만나면 멈추고 옮길 자리를 알려 준다.
+_RETIRED = {
+    "--engines": "engine.type",
+    "--seeds": "seed",
+    "--engine": "engine.type",
+    "--seed": "seed",
+}
 
-def _parse_list(text: Optional[str]) -> list[str]:
-    return [p.strip() for p in text.split(",") if p.strip()] if text else []
+
+def _reject_retired(argv: list[str]) -> None:
+    for a in argv:
+        key = a.split("=", 1)[0]
+        if key in _RETIRED:
+            raise SystemExit(
+                f"{key} 는 없앴다. 조합은 설정의 sweep: 절에 적는다 —\n"
+                f"    sweep:\n      {_RETIRED[key]}: [...]\n"
+                f"실제로 돌린 조합이 설정 파일에 남아야 재현할 수 있다."
+            )
 
 
 def _run(cmd: list[str], label: str) -> tuple[int, str]:
@@ -75,24 +96,83 @@ def _run_dir_from(output: str) -> Optional[Path]:
     return None
 
 
-def _already_done(runs_dir: Path, exp: str, engine: str, seed: int) -> Optional[Path]:
-    """같은 조합의 완료된 런이 있으면 그 디렉터리."""
-    for run in sorted(runs_dir.glob(f"*_{engine}_*_s{seed}")):
+def _already_done(runs_dir: Path, child: SweepChild) -> Optional[Path]:
+    """같은 자식 이름으로 끝난 런이 있으면 그 디렉터리.
+
+    런 이름이 `<자식 이름>_<엔진>_<백본>_<시각>_s<시드>` 이므로 자식 이름을
+    접두사로 찾으면 된다. 두 산출물이 모두 있어야 "끝났다"로 본다 — 학습만
+    되고 평가가 죽은 런을 완료로 세면 게이트가 빈 표로 판정한다.
+    """
+    for run in sorted(runs_dir.glob(f"{child.name}_*"), reverse=True):
         if (run / "metrics.json").exists() and (run / "gate_inputs.json").exists():
             return run
     return None
 
 
+def _child_overrides(child: SweepChild, rest: list[str]) -> list[str]:
+    """설정 인자 + 이 자식의 sweep 덮어쓰기. 덮어쓰기가 뒤에 와야 이긴다."""
+    return [*rest, *child.dotlist]
+
+
+def _execute(
+    child: SweepChild, args: argparse.Namespace, rest: list[str], tag: str
+) -> Optional[dict[str, Any]]:
+    """한 자식의 train → eval. 성공하면 대장에 남길 기록을 돌려준다."""
+    print(f"\n[{tag}] {child.name}", flush=True)
+    print(f"    {child.overrides}", flush=True)
+
+    if args.skip_existing:
+        existing = _already_done(args.runs_dir, child)
+        if existing is not None:
+            print(f"    건너뜀 — 이미 완료: {existing}")
+            return {"index": child.index, "name": child.name,
+                    "overrides": child.overrides, "run_dir": str(existing),
+                    "skipped": True}
+
+    overrides = _child_overrides(child, rest)
+    code, out = _run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "train.py"),
+         "--runs-dir", str(args.runs_dir), "--run-name", child.name, *overrides],
+        f"{child.name} train",
+    )
+    run_dir = _run_dir_from(out)
+    if code != 0 or run_dir is None:
+        return None
+
+    eval_cmd = [
+        sys.executable, str(REPO_ROOT / "scripts" / "eval.py"),
+        "--run", str(run_dir),
+        "--checkpoint", str(run_dir / "checkpoints" / "last.pt"),
+        "--split", args.split,
+        "--anytime-batches", str(args.anytime_batches),
+    ]
+    if args.limit:
+        eval_cmd += ["--limit", str(args.limit)]
+    eval_cmd += overrides
+
+    code, _ = _run(eval_cmd, f"{child.name} eval")
+    if code != 0:
+        return None
+
+    return {"index": child.index, "name": child.name,
+            "overrides": child.overrides, "run_dir": str(run_dir),
+            "skipped": False}
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    _reject_retired(argv)
 
     ap = argparse.ArgumentParser(add_help=False)
-    ap.add_argument("--engines", type=str, help="쉼표 구분. 없으면 설정의 sweep: 절을 쓴다")
-    ap.add_argument("--seeds", type=str, default="0,1,2")
     ap.add_argument("--runs-dir", type=Path, default=Path("runs"))
     ap.add_argument("--split", default="val")
     ap.add_argument("--limit", type=int, default=None, help="평가 샘플 수 상한")
     ap.add_argument("--anytime-batches", type=int, default=1)
+    ap.add_argument("--index", type=int, default=None,
+                    help="이 인덱스의 자식 하나만 돌린다 (slurm 배열용)")
+    ap.add_argument("--list", action="store_true", help="조합을 나열만 한다")
+    ap.add_argument("--count", action="store_true", help="조합 수만 출력한다")
+    ap.add_argument("--json", action="store_true", help="--list 를 JSON 으로")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--skip-existing", action="store_true")
     ap.add_argument("--continue-on-error", action="store_true")
@@ -106,109 +186,106 @@ def main(argv: list[str] | None = None) -> int:
         (a.split("=", 1)[1] for a in rest if a.startswith(("exp=", "config="))), "exp"
     )
     cfg = load_config(rest)
+    # 런 이름에 경로 구분자가 들어가면 런 디렉터리가 중첩된다.
+    children = sweep_plan(cfg, base_name=exp.replace("/", "_"))
 
-    engines = _parse_list(args.engines)
-    if not engines:
-        children = expand_sweep(cfg, base_name=exp)
-        engines = sorted({str(get_path(c, "engine.type")) for _, c in children})
-        if not engines:
-            print("스윕할 엔진이 없다. --engines 로 지정하거나 설정에 sweep: 절을 두라.")
+    if args.count:
+        print(len(children))
+        return 0
+
+    if args.list:
+        if args.json:
+            print(json.dumps(
+                [{"index": c.index, "name": c.name, "overrides": c.overrides}
+                 for c in children], indent=2, ensure_ascii=False))
+        else:
+            print(f"═══ {exp}: {len(children)}조합 ═══")
+            for c in children:
+                print(f"  [{c.index:3d}] {c.name}")
+                print(f"        {' '.join(c.dotlist) or '(sweep 절 없음)'}")
+        return 0
+
+    if args.index is not None:
+        if not 0 <= args.index < len(children):
+            print(f"인덱스 {args.index}가 범위를 벗어났다 (0..{len(children) - 1}).")
             return 2
-    seeds = [int(s) for s in _parse_list(args.seeds)]
+        selected = [children[args.index]]
+    else:
+        selected = children
 
-    combos = [(e, s) for e in engines for s in seeds]
     print(f"═══ 스윕: {exp} ═══")
-    print(f"  엔진 {engines}  × 시드 {seeds}  = {len(combos)}런")
+    print(f"  {len(selected)}/{len(children)}런"
+          + (f"  (인덱스 {args.index})" if args.index is not None else ""))
     print(f"  각 런: train → eval (split={args.split}"
           + (f", limit={args.limit}" if args.limit else "") + ")")
     if args.dry_run:
-        for e, s in combos:
-            print(f"    - engine.type={e} seed={s}")
+        for c in selected:
+            print(f"    [{c.index:3d}] {c.name}: {' '.join(c.dotlist)}")
         return 0
 
     started = time.time()
-    done: list[dict[str, object]] = []
+    done: list[dict[str, Any]] = []
     failures: list[str] = []
 
-    for i, (engine, seed) in enumerate(combos, 1):
-        label = f"{engine}/s{seed}"
-        print(f"\n[{i}/{len(combos)}] {label}", flush=True)
-
-        if args.skip_existing:
-            existing = _already_done(args.runs_dir, exp, engine, seed)
-            if existing is not None:
-                print(f"    건너뜀 — 이미 완료: {existing}")
-                done.append({"engine": engine, "seed": seed, "run_dir": str(existing)})
-                continue
-
-        overrides = [a for a in rest] + [
-            f"engine.type={engine}",
-            f"seed={seed}",
-        ]
-        code, out = _run(
-            [
-                sys.executable, str(REPO_ROOT / "scripts" / "train.py"),
-                "--runs-dir", str(args.runs_dir), *overrides,
-            ],
-            f"{label} train",
-        )
-        run_dir = _run_dir_from(out)
-        if code != 0 or run_dir is None:
-            failures.append(f"{label} (train)")
+    for i, child in enumerate(selected, 1):
+        record = _execute(child, args, rest, tag=f"{i}/{len(selected)}")
+        if record is None:
+            failures.append(child.name)
             if not args.continue_on_error:
                 print("\n중단한다. 계속하려면 --continue-on-error.")
                 return 1
             continue
-
-        eval_cmd = [
-            sys.executable, str(REPO_ROOT / "scripts" / "eval.py"),
-            "--run", str(run_dir),
-            "--checkpoint", str(run_dir / "checkpoints" / "last.pt"),
-            "--split", args.split,
-            "--anytime-batches", str(args.anytime_batches),
-        ]
-        if args.limit:
-            eval_cmd += ["--limit", str(args.limit)]
-        eval_cmd += overrides
-
-        code, _ = _run(eval_cmd, f"{label} eval")
-        if code != 0:
-            failures.append(f"{label} (eval)")
-            if not args.continue_on_error:
-                return 1
-            continue
-
-        done.append({"engine": engine, "seed": seed, "run_dir": str(run_dir)})
+        done.append(record)
 
     elapsed = time.time() - started
-    print(f"\n═══ 스윕 완료: {len(done)}/{len(combos)}런, {elapsed / 60:.1f}분 ═══")
+    print(f"\n═══ 스윕 완료: {len(done)}/{len(selected)}런, {elapsed / 60:.1f}분 ═══")
     for d in done:
-        print(f"  {d['engine']}/s{d['seed']} → {d['run_dir']}")
+        print(f"  [{d['index']:3d}] {d['name']} → {d['run_dir']}")
     if failures:
         print(f"  실패 {len(failures)}: {', '.join(failures)}")
 
-    index = args.runs_dir / f"sweep_{exp.replace('/', '_')}.json"
-    index.parent.mkdir(parents=True, exist_ok=True)
-    index.write_text(
+    _write_index(args, exp, children, done, failures)
+
+    # 판정은 스윕의 일이 아니다 (ADR-008). 명령만 알려 준다.
+    print("\n판정하려면:")
+    print(f"  uv run python scripts/check_gates.py --runs-dir {args.runs_dir} ...")
+    return 1 if failures else 0
+
+
+def _write_index(
+    args: argparse.Namespace,
+    exp: str,
+    children: list[SweepChild],
+    done: list[dict[str, Any]],
+    failures: list[str],
+) -> None:
+    """대장을 쓴다. 배열 작업에서는 자식마다 조각으로 남기고 합친다.
+
+    배열 작업은 자식들이 동시에 끝나므로 한 파일에 같이 쓰면 서로 덮어쓴다.
+    `--index` 로 돈 런은 자기 조각만 쓰고, 합치는 일은 읽는 쪽이 한다.
+    """
+    stem = exp.replace("/", "_")
+    if args.index is not None:
+        path = args.runs_dir / "sweep_parts" / f"{stem}_{args.index:04d}.json"
+    else:
+        path = args.runs_dir / f"sweep_{stem}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
         json.dumps(
-            {"exp": exp, "engines": engines, "seeds": seeds,
-             "runs": done, "failures": failures},
+            {
+                "exp": exp,
+                "total": len(children),
+                "index": args.index,
+                "axes": list(dict.fromkeys(k for c in children for k in c.overrides)),
+                "slurm_job": os.environ.get("SLURM_ARRAY_JOB_ID"),
+                "runs": done,
+                "failures": failures,
+            },
             indent=2, ensure_ascii=False,
         ),
         encoding="utf-8",
     )
-    print(f"  대장: {index}")
-
-    # 판정은 스윕의 일이 아니다 (ADR-008). 명령만 알려 준다.
-    if len(engines) >= 2 and done:
-        ref = next((d["run_dir"] for d in done if d["engine"] == engines[0]), None)
-        print("\n판정하려면:")
-        print(
-            f"  uv run python scripts/check_gates.py --run {ref} "
-            f"--runs-dir {args.runs_dir} "
-            f"--hydra-glob '*_{engines[0]}_*' --mlp-glob '*_{engines[1]}_*'"
-        )
-    return 1 if failures else 0
+    print(f"  대장: {path}")
 
 
 if __name__ == "__main__":

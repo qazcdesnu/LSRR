@@ -3,10 +3,7 @@
 # semiseparable(단방향 SSM) / quasiseparable(양방향 Hydra).
 #
 # 비교가 성립하려면 파라미터·FLOPs가 정합되어야 한다 (ADR-009).
-defaults: [base, backbone/gpt2]
-
-data:
-  type: prosqa
+defaults: [base, backbone/gpt2, data/prosqa]
 
 sweep:
   engine.type: [mlp_onepass, attn_block, mamba_up, mamba_down, bidir_add, hydra_qs]

@@ -40,7 +40,7 @@ import torch.nn.functional as F
 from lsrr.builder import build_slots
 from lsrr.config import load_config
 from lsrr.config.schema import get_path
-from lsrr.data import PromptEncoder, PromptSpec
+from lsrr.data import PromptEncoder, prompt_spec_from_cfg
 from lsrr.data.collate import make_loader
 from lsrr.model import LSRRModel
 from lsrr.objectives.targets import loss_targets, token_nll
@@ -177,10 +177,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         bundle = build_slots(cfg)
         model = LSRRModel(bundle=bundle, cfg=cfg, runner=bundle.runner).to(device)
-        spec = PromptSpec(
-            max_question_tokens=int(get_path(cfg, "prompt.max_question_tokens", 256)),
-            max_answer_tokens=int(get_path(cfg, "prompt.max_answer_tokens", 32)),
-        )
+        spec = prompt_spec_from_cfg(cfg)
         encoder = PromptEncoder(bundle.encoder.tokenizer, spec)
         loader = make_loader(
             bundle.data.get_split("train"), encoder,

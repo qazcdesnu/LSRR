@@ -17,7 +17,7 @@ import torch
 from lsrr.builder import build_slots
 from lsrr.config import load_config
 from lsrr.config.schema import get_path
-from lsrr.data import PromptEncoder, PromptSpec
+from lsrr.data import PromptEncoder, prompt_spec_from_cfg
 from lsrr.data.collate import make_loader
 from lsrr.model import LSRRModel
 from lsrr.runtime import Trainer, parameter_summary, resolve_device, set_seed
@@ -31,17 +31,24 @@ def main(argv: list[str] | None = None) -> int:
     # 같은 실험이 저장 위치에 따라 다른 신원을 갖게 된다.
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--runs-dir", type=str, default="runs")
+    ap.add_argument(
+        "--run-name",
+        type=str,
+        default=None,
+        help="런 이름의 앞자리. 스윕이 자식 이름을 물려줄 때 쓴다 (기본: exp=<name>)",
+    )
     ap.add_argument("-h", "--help", action="store_true")
     args, rest = ap.parse_known_args(argv)
     if args.help:
         print(__doc__)
         print("옵션:\n  --runs-dir DIR   런 디렉터리 루트 (기본 runs)")
+        print("  --run-name NAME  런 이름 앞자리 (기본: exp=<name>)")
         print("  나머지 인자는 설정 오버라이드다: exp=<name> 또는 key=value")
         return 0
 
     cfg = load_config(rest)
 
-    exp_name = next(
+    exp_name = args.run_name or next(
         (a.split("=", 1)[1] for a in rest if a.startswith(("exp=", "config="))), "exp"
     )
     seed = int(get_path(cfg, "seed", 42))
@@ -51,10 +58,7 @@ def main(argv: list[str] | None = None) -> int:
     bundle = build_slots(cfg)
     model = LSRRModel(bundle=bundle, cfg=cfg, runner=bundle.runner)
 
-    spec = PromptSpec(
-        max_question_tokens=int(get_path(cfg, "prompt.max_question_tokens", 256)),
-        max_answer_tokens=int(get_path(cfg, "prompt.max_answer_tokens", 32)),
-    )
+    spec = prompt_spec_from_cfg(cfg)
     encoder = PromptEncoder(bundle.encoder.tokenizer, spec)
     loader = make_loader(
         bundle.data.get_split("train"),
