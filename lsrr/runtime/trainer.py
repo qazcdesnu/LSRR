@@ -133,51 +133,34 @@ class Trainer:
     # ------------------------------------------------------------ 스텝
 
     def forward_batch(self, batch: dict[str, Any]) -> ReasoningTrace:
-        """학습 순전파 1회. 판독 경로는 전 사이클 동일 인스턴스다 (I3)."""
-        model = self.model
-        model.encode_counter.reset()
+        """학습 순전파 1회 — **모델의 순전파를 그대로 쓴다.**
 
-        context = model.encode(batch["input_ids"], batch.get("attention_mask"))
-        R0 = model.build_memory(context)
+        여기서 encode→refine→read 를 따로 조립하지 않는다. 전에는 그렇게 했고,
+        궤적 수집기를 붙이는 것을 빠뜨려 **학습이 사고 토큰 1개만 방출**했다
+        (F-031). 평가는 M개를 방출했으므로 `single` 로 학습하고 `trajectory` 로
+        평가한 셈이었다 — 손실은 정상적으로 내려가서 아무 신호도 없었다.
 
+        학습에만 필요한 것은 두 가지뿐이고 둘 다 인자로 넘긴다: 진단 기록 훅과,
+        깊은 감독이 TBPTT 윈도를 먼저 알아야 해서 미리 뽑는 M 이다 (ADR-006).
+        """
         recorder = DiagnosticsRecorder()
-        hooks: list[Any] = [recorder]
-        readout_hook: Optional[ReadoutHook] = None
 
-        # 깊은 감독만 켜져 있으면 감독 대상 사이클만 판독한다 (ADR-006).
-        # 그러려면 TBPTT 윈도를 미리 알아야 하므로 M을 여기서 뽑아 넘긴다.
-        # anytime 곡선(readout_per_cycle)이 켜져 있으면 전 사이클을 읽는다.
         M: Optional[int] = None
         cycles: Optional[list[int]] = None
         if self.deep_supervision and not self.readout_per_cycle:
-            M = model.runner.schedule.sample_M()
+            M = self.model.runner.schedule.sample_M()
             cycles = sample_supervision_cycles(
-                make_window(M, model.runner.tbptt_k),
+                make_window(M, self.model.runner.tbptt_k),
                 num_cycles=self.ds_num_cycles,
             )
 
-        if self.readout_per_cycle or self.deep_supervision:
-            readout_hook = ReadoutHook(
-                readout=model.readout,
-                context=context,
-                answer_ids=batch.get("target_ids"),
-                cycles=cycles,
-            )
-            hooks.append(readout_hook)
-
-        trace = model.refine(R0, hooks=hooks, is_eval=False, M=M)
-        trace.R0 = R0
-        trace.h_ctx = context.h_ctx
-
-        result = model.read(trace.R_star, context, answer_ids=batch.get("target_ids"))
-        trace.logits = result.logits
-        trace.h_fusion = result.h_fusion
-        trace.alpha = result.alpha
-        if readout_hook is not None:
-            trace.per_cycle_readout = readout_hook.results
-            trace.supervised_cycles = readout_hook.supervised_cycles()
-        trace.meta["encode_count"] = model.encode_counter.count
-        return trace
+        return self.model(
+            batch,
+            is_eval=False,
+            hooks=[recorder],
+            M=M,
+            readout_cycles=cycles,
+        )
 
     def training_step(self, batch: dict[str, Any]) -> dict[str, Any]:
         batch = _to_device(batch, self.device)

@@ -208,18 +208,38 @@ class LSRRModel(nn.Module):
 
     # ------------------------------------------------------------ 순전파
 
+    @property
+    def _needs_per_cycle_readout(self) -> bool:
+        """사이클별 판독이 필요한가 — anytime 곡선(②) 또는 깊은 감독(ADR-006)."""
+        return bool(
+            get_path(self.cfg, "recurrence.hooks.readout_per_cycle", False)
+            or get_path(self.cfg, "objective.deep_supervision.enabled", False)
+        )
+
     def forward(
         self,
         batch: dict[str, Any],
         is_eval: bool = False,
         hooks: Sequence[CycleHook] = (),
+        M: Optional[int] = None,
+        readout_cycles: Optional[Sequence[int]] = None,
     ) -> ReasoningTrace:
-        """전체 순전파.
+        """전체 순전파 — **학습과 평가가 공유하는 유일한 경로다.**
+
+        호출부가 순전파를 따로 조립하면 두 경로가 말없이 갈라진다. 실제로
+        그랬다 (F-031): 학습이 궤적 수집기를 붙이지 않아 사고 토큰을 1개만
+        방출하고, 평가는 M개를 방출했다 — `single` 로 학습하고 `trajectory` 로
+        평가한 셈이다. 그러므로 **여기 말고 다른 곳에서 encode→refine→read 를
+        조립하지 않는다.**
 
         Args:
             batch: 최소 `input_ids`. 학습 시 `labels`/`target_ids`.
             is_eval: 동적 종료를 쓰는 평가 모드.
-            hooks: 사이클 콜백 (진단 기록·깊은 감독·anytime 곡선).
+            hooks: 추가 사이클 콜백 (진단 기록 등). 궤적 수집기와 판독 훅은
+                이 메서드가 직접 붙인다 — 붙이는 것을 잊는 것이 곧 F-031 이다.
+            M: 사이클 수를 고정한다. 깊은 감독이 TBPTT 윈도를 먼저 알아야 할 때
+                호출자가 뽑아 넘긴다 (ADR-006). 평가 경로에서는 무시된다.
+            readout_cycles: 판독할 사이클 인덱스. None 이면 전 사이클.
 
         Returns:
             ReasoningTrace. 모듈 객체는 담지 않는다 (ADR-005).
@@ -232,9 +252,24 @@ class LSRRModel(nn.Module):
         # 궤적 방출이면 사이클별 상태를 모아야 한다 (ADR-015). 훅으로 모으므로
         # runner 는 방출 구조를 모른다 — 축의 분리를 유지한다.
         collector = _TrajectoryCollector() if self._emits_trajectory else None
-        all_hooks = [*hooks, collector] if collector is not None else list(hooks)
+        readout_hook = None
+        if self._needs_per_cycle_readout:
+            from lsrr.recurrence.hooks import ReadoutHook
 
-        trace = self.refine(R0, hooks=all_hooks, is_eval=is_eval)
+            readout_hook = ReadoutHook(
+                readout=self.readout,
+                context=context,
+                answer_ids=batch.get("target_ids"),
+                cycles=readout_cycles,
+            )
+
+        all_hooks: list[Any] = list(hooks)
+        if readout_hook is not None:
+            all_hooks.append(readout_hook)
+        if collector is not None:
+            all_hooks.append(collector)
+
+        trace = self.refine(R0, hooks=all_hooks, is_eval=is_eval, M=M)
         trace.R0 = R0
         trace.h_ctx = context.h_ctx
 
@@ -251,6 +286,9 @@ class LSRRModel(nn.Module):
         trace.h_fusion = readout.h_fusion
         trace.h_thought = readout.h_thought
         trace.alpha = readout.alpha
+        if readout_hook is not None:
+            trace.per_cycle_readout = readout_hook.results
+            trace.supervised_cycles = readout_hook.supervised_cycles()
         trace.meta.setdefault("encode_count", self.encode_counter.count)
         return trace
 
