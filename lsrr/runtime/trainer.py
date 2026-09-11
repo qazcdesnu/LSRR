@@ -13,7 +13,7 @@ base 가중치는 전 과정에서 동결이다. Phase B 는 엔진을 얼리고
     5. objectives(trace, batch)    → loss
     6. backward / clip / step       백본에는 그래디언트 없음 (I1, I4)
 
-개작: Legacy_LSRR/lsrr/training/trainer.py (LR 스케줄·클리핑·체크포인트 계승)
+개작: v1.0:lsrr/training/trainer.py (LR 스케줄·클리핑·체크포인트 계승)
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def cosine_schedule_with_warmup(
 ) -> torch.optim.lr_scheduler.LambdaLR:
     """1-cycle half-cosine (Mamba-2 레시피).
 
-    이식: Legacy_LSRR/lsrr/training/trainer.py:get_cosine_schedule_with_warmup
+    이식: v1.0:lsrr/training/trainer.py:get_cosine_schedule_with_warmup
     """
     base_lr = optimizer.param_groups[0]["lr"]
     min_ratio = float(min_lr) / float(base_lr) if base_lr > 0 else 0.0

@@ -1,7 +1,7 @@
 # LSRR 시스템 아키텍처
 
-> **문서 지위:** 이 문서는 LSRR_01 코드베이스의 최상위 설계 문서다. `documents/Research_Proposal.md`(무엇을 주장하는가)와 각 폴더의 `README.md`(각 부품이 무엇을 하는가) 사이를 잇는다.
-> 충돌 시 우선순위: `Research_Proposal.md` > `ARCHITECTURE.md` > 폴더별 `README.md` > 코드.
+> **문서 지위:** 이 문서는 LSRR 코드베이스의 최상위 설계 문서다. `documents/Research_Proposal_v2.1.md`(무엇을 주장하는가)와 각 폴더의 `README.md`(각 부품이 무엇을 하는가) 사이를 잇는다.
+> 충돌 시 우선순위: `Research_Proposal_v2.1.md` > `DESIGN_DECISIONS.md`(ADR) > `ARCHITECTURE.md` > 폴더별 `README.md` > 코드.
 > **최종 갱신:** 2026-09-10 · **상태:** 설계 확정, 구현 미착수
 
 ---
@@ -10,13 +10,13 @@
 
 | 문서 | 답하는 질문 |
 |---|---|
-| `documents/Research_Proposal.md` | 무엇을 주장하고 무엇을 증명해야 하는가 |
+| `documents/Research_Proposal_v2.1.md` | 무엇을 주장하고 무엇을 증명해야 하는가 (정본). 구판 v1·v2 는 `documents/archive/` |
 | `documents/ARCHITECTURE.md` (본 문서) | 시스템 전체가 어떻게 조립되는가 |
 | `documents/MODULE_INDEX.md` | 어떤 모듈이 어디에 있고 지금 어떤 상태인가 (지속 갱신 보드) |
 | `documents/DESIGN_DECISIONS.md` | 왜 이렇게 결정했는가 (ADR, 특히 레거시와 갈라지는 지점) |
 | `documents/FINDINGS.md` | 구현 중 **무엇이 측정되었는가** (실측·위험·교훈) |
 | `documents/CONVENTIONS.md` | 컴포넌트를 어떤 규약으로 쓰고 문서를 어떻게 유지하는가 |
-| `documents/LEGACY_MAP.md` | `Legacy_LSRR`의 무엇을 이식/개작/폐기하는가 |
+| `documents/LEGACY_MAP.md` | v1.0의 무엇을 이식/개작/폐기했는가 |
 | `documents/ROADMAP.md` | 어떤 순서로 구현하고 어느 게이트에서 멈추는가 |
 | `lsrr/<pkg>/README.md` | 이 폴더의 역할·경계·모듈 목록·계약 |
 
@@ -205,7 +205,6 @@
 | `tests/` | 계약·단위·통합·회귀 테스트 | `tests/README.md` |
 | `runs/` | 실험 산출물 (버전 관리 제외) | `runs/README.md` |
 | `caches/` | 추출 은닉 상태 캐시 (버전 관리 제외) | `caches/README.md` |
-| `Legacy_LSRR/` | **읽기 전용 참조 구현. 절대 수정 금지.** | `documents/LEGACY_MAP.md` |
 
 ---
 
@@ -262,4 +261,4 @@
 3. **설계가 바뀌면** 코드보다 `DESIGN_DECISIONS.md`에 ADR을 먼저 추가한다. ADR 번호를 코드 주석에서 인용한다 (`# ADR-003`).
 3-1. **측정이 설계를 바꿨거나 위험을 드러냈으면** `documents/FINDINGS.md`에 수치·조건·재현 방법과 함께 기록한다. ADR은 결정을, FINDINGS는 사실을 담는다 — 결정은 뒤집혀도 측정은 남는다.
 4. **불변식을 추가하려면** 본 문서 §4 표에 행을 추가하고, 같은 커밋에 `tests/contracts/` 테스트를 추가한다.
-5. `Legacy_LSRR/`은 **읽기 전용**이다. 참조한 내용은 `LEGACY_MAP.md`에 이식/개작/폐기 판정과 함께 기록한다.
+5. 레거시(v1.0)는 **`v1.0` 브랜치에만 있다.** `git show v1.0:<경로>` 로 참조하고, 가져온 내용은 `LEGACY_MAP.md`에 이식/개작/폐기 판정과 함께 기록한다.

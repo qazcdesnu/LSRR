@@ -4,7 +4,7 @@
 1회를 비용에서 빼면 주장 자체가 검증 불가능해진다. 따라서 백본 항이 측정되지
 않았으면 **0으로 두지 않고 `None`으로 두고 플래그를 내린다** (규약 §3).
 
-개작: Legacy_LSRR/lsrr/utils/flops.py
+개작: v1.0:lsrr/utils/flops.py
 """
 
 from __future__ import annotations

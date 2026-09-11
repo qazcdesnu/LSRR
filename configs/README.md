@@ -56,7 +56,7 @@ python scripts/train.py exp=phase0_prosqa engine.type=mamba_up train.lr=5e-4
 `mid_band`·`late_band`의 경계는 **레이어 수의 비율**로 지정한다(절대 인덱스 금지 — 백본을 바꾸면 의미가 달라진다).
 
 ## 레거시 참조
-`Legacy_LSRR/configs/` — **개작**. 계층 defaults 구조와 `sweep:` 절은 그대로. `decoder/` 제거(ADR-001), `memory/`·`readout/`·`recurrence/`·`stability/`·`ablation/` 추가, 슬롯 이름 변경 반영.
+`v1.0:configs/` — **개작**. 계층 defaults 구조와 `sweep:` 절은 그대로. `decoder/` 제거(ADR-001), `memory/`·`readout/`·`recurrence/`·`stability/`·`ablation/` 추가, 슬롯 이름 변경 반영.
 `published_numbers.yaml`은 **이식**.
 
 ## 상태

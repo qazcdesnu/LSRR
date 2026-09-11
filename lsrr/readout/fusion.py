@@ -5,7 +5,7 @@
 `h_ctx`는 **어댑터를 통과하지 않은** 백본 원본 h⁽ᴸ⁾이고, `W_r`은 d_model 공간의
 사고 표현을 백본 공간(d_in)으로 되돌린다 (ADR-003).
 
-개작: Legacy_LSRR/lsrr/fusion/attention_pooling.py
+개작: v1.0:lsrr/fusion/attention_pooling.py
 """
 
 from __future__ import annotations

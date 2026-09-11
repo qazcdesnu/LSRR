@@ -46,7 +46,7 @@ should_stop(signals: TerminationSignals, m: int) -> (stop_mask [B], CycleDiagnos
 `core`. (L1 — `recurrence`가 이 패키지를 호출하지, 그 반대가 아니다.)
 
 ## 레거시 참조
-`Legacy_LSRR/lsrr/termination/rules.py` — **개작**. `fixed_m`·`delta_state`·`kl_output` 구현은 이식하되 (i) 신호 계산을 `signals.py`로 공통화하고 (ii) `M_max` 폴백을 각 규칙에 흩어 두는 대신 `base.py`로 승격한다(레거시는 규칙마다 `fallback = (m + 1 >= self.m_max)`를 반복했다 — 새 규칙을 추가할 때 빠뜨리기 쉬운 형태다). `entropy_output`과 `behavior.py`는 신규.
+`v1.0:lsrr/termination/rules.py` — **개작**. `fixed_m`·`delta_state`·`kl_output` 구현은 이식하되 (i) 신호 계산을 `signals.py`로 공통화하고 (ii) `M_max` 폴백을 각 규칙에 흩어 두는 대신 `base.py`로 승격한다(레거시는 규칙마다 `fallback = (m + 1 >= self.m_max)`를 반복했다 — 새 규칙을 추가할 때 빠뜨리기 쉬운 형태다). `entropy_output`과 `behavior.py`는 신규.
 
 ## 상태
 **검증(부분)** — 규칙 4종·신호·M_max 폴백 기반 완료 (M3). `calibration.py`·`behavior.py`는 M6.

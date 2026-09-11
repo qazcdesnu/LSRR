@@ -1,7 +1,7 @@
 """Hydra 이식 충실도 — M4 완료 판정과 레거시 폐기 판정의 근거.
 
 이 파일이 통과하면 레거시 `runs/`·`caches/`의 대조 가치가 소멸한다
-(`ROADMAP.md` «Legacy_LSRR 폐기 계획»).
+(`ROADMAP.md` «v1.0(레거시) 폐기 — 완료»).
 
 검증 대상은 quasiseparable 항등식이다.
 
@@ -12,7 +12,7 @@
 `bidir_add`와 **비트 단위로 동일**해 Ablation C의 핵심 비교가 무의미했다.
 아래 `test_hydra_qs_is_not_bidir_add`가 그 회귀를 고정한다.
 
-이식: Legacy_LSRR/tests/{test_hydra_quasiseparable,test_engine_equiv,test_param_matching}.py
+이식: v1.0:tests/{test_hydra_quasiseparable,test_engine_equiv,test_param_matching}.py
 """
 
 from __future__ import annotations

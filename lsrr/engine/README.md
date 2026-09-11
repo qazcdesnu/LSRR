@@ -49,9 +49,9 @@ EngineWrapper.forward_step(R_m, R0, m) -> R_next   # [B, L, d_model] 유지
 
 ## 레거시 참조
 전부 **이식** 대상이며, 레거시에서 가장 완성도 높은 영역이다.
-- `Legacy_LSRR/lsrr/engines/wrapper.py` — 감쇠·사이클 임베딩·게이트 재주입·pre-norm이 §4.2의 "재귀 적응 장치" 3종에 정확히 대응한다.
-- `Legacy_LSRR/lsrr/engines/{hydra_qs,mamba_up_down,attn_block,mlp_onepass}.py`
-- `Legacy_LSRR/tests/{test_hydra_quasiseparable,test_engine_equiv,test_param_matching}.py` — HydraQS 순방향 분기가 Mamba-Up과 수치적으로 같아야 한다는 검사는 quasiseparable 구현의 정확성 근거다. 반드시 함께 이식한다.
+- `v1.0:lsrr/engines/wrapper.py` — 감쇠·사이클 임베딩·게이트 재주입·pre-norm이 §4.2의 "재귀 적응 장치" 3종에 정확히 대응한다.
+- `v1.0:lsrr/engines/{hydra_qs,mamba_up_down,attn_block,mlp_onepass}.py`
+- `v1.0:tests/{test_hydra_quasiseparable,test_engine_equiv,test_param_matching}.py` — HydraQS 순방향 분기가 Mamba-Up과 수치적으로 같아야 한다는 검사는 quasiseparable 구현의 정확성 근거다. 반드시 함께 이식한다.
 
 ## 상태
 **검증** — 전 모듈 완료 (M4). Ablation C 스윕의 6개 엔진이 모두 등록되어 있고

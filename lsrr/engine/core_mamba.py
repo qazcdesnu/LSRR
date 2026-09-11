@@ -12,7 +12,7 @@ quasiseparable과 대비되는 지점이 세 가지다.
 `bidir_add`가 존재하는 이유는 휴리스틱 양방향의 열세를 실측으로 보이기 위해서다.
 "양방향이면 다 같다"는 반론을 막는 조건이므로 Ablation C에서 빠지면 안 된다.
 
-이식: Legacy_LSRR/lsrr/engines/mamba_up_down.py
+이식: v1.0:lsrr/engines/mamba_up_down.py
 """
 
 from __future__ import annotations

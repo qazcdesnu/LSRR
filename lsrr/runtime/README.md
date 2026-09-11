@@ -46,9 +46,9 @@ KV 캐시가 상주하므로 레거시보다 메모리 압박이 크다 (ADR-002
 `core`, `config`, `objectives`, `telemetry`, `metrics`, 조립된 모델. (L5.)
 
 ## 레거시 참조
-`Legacy_LSRR/lsrr/training/trainer.py` — **개작**. 1-cycle half-cosine LR 스케줄(Mamba-2 레시피), grad clip, 체크포인트, 재개는 이식. 판독이 백본 경유로 바뀌었으므로 스텝 루프 자체는 재작성한다.
-`Legacy_LSRR/lsrr/utils/{seed,oom}.py` — **이식**.
-`Legacy_LSRR/tests/{test_reproducibility,test_logging_and_resume,test_oom}.py` — 이식.
+`v1.0:lsrr/training/trainer.py` — **개작**. 1-cycle half-cosine LR 스케줄(Mamba-2 레시피), grad clip, 체크포인트, 재개는 이식. 판독이 백본 경유로 바뀌었으므로 스텝 루프 자체는 재작성한다.
+`v1.0:lsrr/utils/{seed,oom}.py` — **이식**.
+`v1.0:tests/{test_reproducibility,test_logging_and_resume,test_oom}.py` — 이식.
 
 ## 상태
 **검증** — M3 완료. `resume.py`만 남았다(체크포인트 왕복은 동작).

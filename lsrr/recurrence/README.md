@@ -49,7 +49,7 @@ CycleHook.on_cycle(m, R_m, R_next, diagnostics) -> None
 `core`, `engine`, `termination`. (L2.)
 
 ## 레거시 참조
-`Legacy_LSRR/lsrr/iteration/controller.py` — **개작(3분할)**. 조기 종료 래칭 로직(`controller.py:129-141`: `newly_stopped` 마스크로 `R_final`을 고정하고 `stopping_cycles`를 기록)은 의미 그대로 `state.py`로 옮긴다. 반면 `run_eval`이 `fusion_head`·`decoder`를 인자로 받던 구조는 훅으로 뒤집는다 (ADR-005).
+`v1.0:lsrr/iteration/controller.py` — **개작(3분할)**. 조기 종료 래칭 로직(`controller.py:129-141`: `newly_stopped` 마스크로 `R_final`을 고정하고 `stopping_cycles`를 기록)은 의미 그대로 `state.py`로 옮긴다. 반면 `run_eval`이 `fusion_head`·`decoder`를 인자로 받던 구조는 훅으로 뒤집는다 (ADR-005).
 
 ## 상태
 **검증** — M3 완료. 러너·스케줄·TBPTT·래칭·훅 전부 구현.

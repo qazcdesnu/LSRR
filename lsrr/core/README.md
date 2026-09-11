@@ -67,8 +67,8 @@
 없음 (L0).
 
 ## 레거시 참조
-- `Legacy_LSRR/lsrr/registry.py` — **이식**. 시그니처 기반 kwargs 필터링과 별칭 등록이 잘 설계되어 있다.
-- `Legacy_LSRR/lsrr/interfaces.py` — **개작**. 슬롯 재편(디코더 폐지, ReadoutPath·Stability·Gate 신설) 및 dataclass 분리.
+- `v1.0:lsrr/registry.py` — **이식**. 시그니처 기반 kwargs 필터링과 별칭 등록이 잘 설계되어 있다.
+- `v1.0:lsrr/interfaces.py` — **개작**. 슬롯 재편(디코더 폐지, ReadoutPath·Stability·Gate 신설) 및 dataclass 분리.
 
 ## 상태
 **검증** — M1 완료. 5개 모듈, 인터페이스 18종·불변식 헬퍼 14종·레지스트리 15종.

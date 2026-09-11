@@ -5,7 +5,7 @@ KV 캐시)를 **동시에** 얻는다. 이것이 ADR-002의 핵심이다 — KV�
 캐시하는 것은 비현실적이고(GPT-2 기준 GSM8k-Aug 학습셋 전체 약 2.8TB), 백본을
 어차피 로드해야 하므로 H 사전 캐시로 아끼려던 비용도 크지 않다.
 
-개작: Legacy_LSRR/lsrr/backbones/extractor.py
+개작: v1.0:lsrr/backbones/extractor.py
 """
 
 from __future__ import annotations

@@ -54,8 +54,8 @@ CostReport {
 `core`, `data`(채점 위임). (L5.)
 
 ## 레거시 참조
-`Legacy_LSRR/lsrr/utils/flops.py`, `Legacy_LSRR/lsrr/training/evaluator.py` — **개작**. 해석적 FLOPs 추정 구조와 `flops_includes_backbone` 플래그 규약, `MissingTargetError` 정책은 계승. 디코더 항을 연속 디코딩 항으로 교체.
-`Legacy_LSRR/tests/test_eval_protocol.py`(361줄) — 평가 프로토콜의 함정이 축적된 테스트다. 개작해 이식.
+`v1.0:lsrr/utils/flops.py`, `v1.0:lsrr/training/evaluator.py` — **개작**. 해석적 FLOPs 추정 구조와 `flops_includes_backbone` 플래그 규약, `MissingTargetError` 정책은 계승. 디코더 항을 연속 디코딩 항으로 교체.
+`v1.0:tests/test_eval_protocol.py`(361줄) — 평가 프로토콜의 함정이 축적된 테스트다. 개작해 이식.
 
 > `evaluate.py`는 원래 계획에 없던 모듈이다. 게이트는 판정만 하고 실험을 돌리지
 > 않으므로(`gates/README.md`), **판정 데이터를 만드는 쪽**이 어딘가에는 있어야 한다.

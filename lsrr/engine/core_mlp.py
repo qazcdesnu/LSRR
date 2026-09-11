@@ -6,7 +6,7 @@
 믹서 행렬 클래스 관점에서 이것은 **대각 행렬**이다 — 레이어 간 정보를 전혀
 섞지 않는다. 따라서 "레이어 축을 섞는 것이 도움이 되는가"의 하한이다.
 
-이식: Legacy_LSRR/lsrr/engines/mlp_onepass.py
+이식: v1.0:lsrr/engines/mlp_onepass.py
 """
 
 from __future__ import annotations

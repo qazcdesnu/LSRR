@@ -31,7 +31,7 @@ score(prediction, target, meta) -> bool
 이 데이터셋은 **이득이 없기를 예측하는** 실험 대상이다 (§6.1, §9). 본 방법은 필요한 정보가 문맥과 1회 인코딩으로 확보되는 **결합-병목(composition-bound)** 추론을 겨냥하며, 파라미터 지식의 스텝별 재인출이 필요한 **인출-병목(retrieval-bound)** 과제는 범위 밖이다. 이득의 부재가 곧 메커니즘 이해의 증거이므로, 여기서 결과가 나쁘다고 데이터셋을 교체하거나 하이퍼파라미터를 더 튜닝해서는 안 된다 — 반증 가능한 예측을 사후에 구제하는 것은 실험이 아니다.
 
 ## 레거시 참조
-`Legacy_LSRR/lsrr/data/{gsm8k,prosqa,multiplication}.py` — **이식**(파일 이동). 나머지는 신규.
+`v1.0:lsrr/data/{gsm8k,prosqa,multiplication}.py` — **이식**(파일 이동). 나머지는 신규.
 
 ## 상태
 계획 — `multiplication`·`prosqa`는 M3, `gsm8k_aug`는 M6, 나머지는 M6~M7

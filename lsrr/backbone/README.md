@@ -54,8 +54,8 @@ generate(h_fusion, kv_cache, max_new_tokens, eos_id) -> token_ids
 `core`. (L1이므로 형제 패키지 import 금지.)
 
 ## 레거시 참조
-- `Legacy_LSRR/lsrr/backbones/extractor.py` — **개작**. 동결·토크나이저 해시·마지막 활성 토큰 인덱싱은 이식. `position_rule` 택일 구조를 `H_last`+`H_pool` 동시 산출로 확장하고 KV 캐시 반환을 추가한다.
-- `Legacy_LSRR/tests/test_freeze.py` — 이식 (I1).
+- `v1.0:lsrr/backbones/extractor.py` — **개작**. 동결·토크나이저 해시·마지막 활성 토큰 인덱싱은 이식. `position_rule` 택일 구조를 `H_last`+`H_pool` 동시 산출로 확장하고 KV 캐시 반환을 추가한다.
+- `v1.0:tests/test_freeze.py` — 이식 (I1).
 
 ## 주의 사항
 1. **`include_embedding`의 의미** — 임베딩 층 출력을 레이어 0으로 포함할지 여부는 `L`을 바꾸므로 캐시 키와 레이어 위치 임베딩 크기에 모두 영향을 준다. 설정에서 명시적으로 고정하고 런 메타에 기록한다.

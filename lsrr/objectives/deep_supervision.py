@@ -17,7 +17,7 @@
 **재검토 조건:** Phase 0 게이트 ②(M 증가 → 정확도 증가)가 실패하면 과잉 감독에
 의한 반복 형해화를 의심하고 λ_ds·γ를 먼저 낮춘다 (ADR-006, §5의 명시 처방).
 
-개작: Legacy_LSRR/lsrr/losses/composite.py:DeepSupervisionLoss
+개작: v1.0:lsrr/losses/composite.py:DeepSupervisionLoss
       (균등 가중 → γ 가중, 윈도 무관 랜덤 2개 → 윈도 내 샘플링)
 """
 

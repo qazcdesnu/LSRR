@@ -43,7 +43,7 @@ back-patching 연구는 2홉 질의 오답 사례의 32~66%에서 후기 층 상
 `core`, `metrics`, `telemetry`, `backbone`(개입). (L6.)
 
 ## 레거시 참조
-레거시는 `BaseAnalysisPlugin` 인터페이스만 선언하고 구현이 없다 (`Legacy_LSRR/lsrr/interfaces.py:168`). 전부 **신규**.
+레거시는 `BaseAnalysisPlugin` 인터페이스만 선언하고 구현이 없다 (`v1.0:lsrr/interfaces.py:168`). 전부 **신규**.
 
 ## 상태
 **검증(부분)** — `collapse.py` 완료 (M5, 게이트 ①). 나머지는 M7.

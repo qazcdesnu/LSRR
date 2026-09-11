@@ -9,7 +9,7 @@
 Ablation D(재귀 적응 장치)가 서로 오염되지 않는다 — 코어를 바꿔도 갱신식은
 동일하고, 갱신식을 바꿔도 코어는 동일하다.
 
-이식: Legacy_LSRR/lsrr/engines/wrapper.py
+이식: v1.0:lsrr/engines/wrapper.py
 """
 
 from __future__ import annotations

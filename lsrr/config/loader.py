@@ -3,7 +3,7 @@
 병합 순서 (CONVENTIONS.md §2):
     configs/base.yaml → 도메인 조각 → exp/ 또는 ablation/ → CLI dotlist(최우선)
 
-개작: Legacy_LSRR/lsrr/config.py (defaults 재귀 해석·dotlist 병합 계승)
+개작: v1.0:lsrr/config.py (defaults 재귀 해석·dotlist 병합 계승)
 """
 
 from __future__ import annotations

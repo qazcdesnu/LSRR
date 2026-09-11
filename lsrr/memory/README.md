@@ -36,7 +36,7 @@ LayerMemoryPipeline(ContextBundle) -> R0 [B, L', d_model]
 `core`. (L1.)
 
 ## 레거시 참조
-- `Legacy_LSRR/lsrr/adapters/layer_adapter.py` — **이식**. `torch.einsum("bli,lio->blo")` 기반 per-layer affine, RMSNorm, 레이어 위치 임베딩이 §4.1에 정확히 대응한다. 레이어 위치 임베딩만 별도 모듈로 분리.
+- `v1.0:lsrr/adapters/layer_adapter.py` — **이식**. `torch.einsum("bli,lio->blo")` 기반 per-layer affine, RMSNorm, 레이어 위치 임베딩이 §4.1에 정확히 대응한다. 레이어 위치 임베딩만 별도 모듈로 분리.
 - 레거시에 `composer`·`scoping`은 **없다** — 각각 ADR-004와 Ablation A의 신규 요구다.
 
 ## 상태

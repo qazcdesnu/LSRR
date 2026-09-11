@@ -49,9 +49,9 @@ ReadoutPath.readout(R, h_ctx, context) -> ReadoutResult { logits, h_fusion, alph
 `core`, `backbone`. (L2.)
 
 ## 레거시 참조
-- `Legacy_LSRR/lsrr/fusion/attention_pooling.py` — **개작**. α 풀링과 residual/gate/concat 분기는 이식. 앵커를 어댑터 출력(`R0[:, -1, :]`)에서 백본 원본 `h_ctx`로 교체하고 `W_r` 출력 폭을 `d_in`으로 고정한다 (ADR-003).
-- `Legacy_LSRR/lsrr/decoders/` — **폐기** (ADR-001).
-- `Legacy_LSRR/tests/test_fusion_residual.py` — 앵커 교체를 반영해 `tests/contracts/test_injection_space.py`로 개작.
+- `v1.0:lsrr/fusion/attention_pooling.py` — **개작**. α 풀링과 residual/gate/concat 분기는 이식. 앵커를 어댑터 출력(`R0[:, -1, :]`)에서 백본 원본 `h_ctx`로 교체하고 `W_r` 출력 폭을 `d_in`으로 고정한다 (ADR-003).
+- `v1.0:lsrr/decoders/` — **폐기** (ADR-001).
+- `v1.0:tests/test_fusion_residual.py` — 앵커 교체를 반영해 `tests/contracts/test_injection_space.py`로 개작.
 
 ## 상태
 **검증** — `injection`(M2)·`fusion`·`path`(M3) 완료. `decode.py`는 평가 경로(M5)와 함께.

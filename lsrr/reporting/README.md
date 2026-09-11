@@ -34,7 +34,7 @@
 `core`, `metrics`, `telemetry`, `analysis`. (L7.)
 
 ## 레거시 참조
-`Legacy_LSRR/scripts/make_tables.py`, `Legacy_LSRR/configs/published_numbers.yaml` — **개작**. 런 인덱스와 공표치 병합 로직은 이식하고, †/‡ 표기와 공란 원칙을 `provenance.py`로 명시화한다.
+`v1.0:scripts/make_tables.py`, `v1.0:configs/published_numbers.yaml` — **개작**. 런 인덱스와 공표치 병합 로직은 이식하고, †/‡ 표기와 공란 원칙을 `provenance.py`로 명시화한다.
 
 ## 상태
 계획 — M6

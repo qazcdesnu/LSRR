@@ -19,4 +19,4 @@ runs/
 `run_id = <exp>_<engine>_<backbone>_<YYYYMMDD_HHMMSS>_s<seed>`
 
 ## 주의
-`Legacy_LSRR/runs/`의 산출물과 **섞어 보고하지 않는다.** 디코딩 경로가 다르므로(ADR-001) 비교 불가다.
+v1.0 시절의 산출물과 **섞어 보고하지 않는다.** 디코딩 경로가 다르므로(ADR-001) 비교 불가다.

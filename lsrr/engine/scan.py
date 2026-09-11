@@ -6,7 +6,7 @@ Ablation C의 비교 대상들이 서로 의존하게 되므로, 공용 부품�
 커스텀 CUDA 커널에 의존하지 않는 순차 구현이다 — 레이어 축 길이는 백본 레이어
 수(GPT-2 기준 12)라 짧고, CPU에서 테스트가 돌아야 한다는 규약(§4)을 만족한다.
 
-이식: Legacy_LSRR/lsrr/engines/ssm_core.py
+이식: v1.0:lsrr/engines/ssm_core.py
 """
 
 from __future__ import annotations

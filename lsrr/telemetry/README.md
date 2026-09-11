@@ -51,7 +51,7 @@ runs/<run_id>/
 `core`. (L5.)
 
 ## 레거시 참조
-`Legacy_LSRR/lsrr/utils/logging.py` — **개작**. `ExperimentTracker`와 런 ID 규약, `diagnostics.jsonl`은 이식하고 트레이스 스키마를 별도 모듈로 분리한다.
+`v1.0:lsrr/utils/logging.py` — **개작**. `ExperimentTracker`와 런 ID 규약, `diagnostics.jsonl`은 이식하고 트레이스 스키마를 별도 모듈로 분리한다.
 
 ## 상태
 **검증(부분)** — `tracker`·`traces` 완료 (M3). `run_index`·`console`은 M5~M6.

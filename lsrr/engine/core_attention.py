@@ -7,7 +7,7 @@
 위해서다. 따라서 **파라미터 예산을 기준 엔진에 맞추는 것이 핵심**이며(ADR-009),
 `budget.py`가 FFN 폭을 역산해 그 정합을 보증한다.
 
-이식: Legacy_LSRR/lsrr/engines/attn_block.py
+이식: v1.0:lsrr/engines/attn_block.py
 """
 
 from __future__ import annotations

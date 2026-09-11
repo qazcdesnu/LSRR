@@ -3,7 +3,7 @@
 종료 판정은 **샘플별**이다 — 배치 평균으로 정지를 결정하면 "문제 난이도에 따른
 적응적 계산"이라는 주장이 성립하지 않는다.
 
-이식: Legacy_LSRR/lsrr/iteration/controller.py:129-141
+이식: v1.0:lsrr/iteration/controller.py:129-141
 """
 
 from __future__ import annotations

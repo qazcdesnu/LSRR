@@ -9,7 +9,7 @@
 순서에 달려 있으니, 순서를 흔드는 변경(예: 정렬 추가)은 진행 중인 배열 작업을
 깨뜨린다.
 
-이식: Legacy_LSRR/lsrr/config.py:expand_sweep_configs
+이식: v1.0:lsrr/config.py:expand_sweep_configs
 """
 
 from __future__ import annotations

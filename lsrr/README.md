@@ -30,7 +30,7 @@ LSRRModel.forward(batch, mode) -> ReasoningTrace
 `ARCHITECTURE.md` §6의 폴더 역할표 참조. 레이어 규칙(§5): 상위 레이어는 하위 레이어만 import하고, 같은 레이어끼리는 import하지 않는다. 조립은 L4(여기)에서만.
 
 ## 레거시 참조
-`Legacy_LSRR/lsrr/model.py` — 슬롯 조립과 `d_model` 단일 해석 지점 아이디어는 계승. 단 `_resolve_d_model`의 `d_model = d_in` 강제는 폐지한다 (ADR-003: 융합 앵커가 백본 원본 공간으로 이동해 `d_model`이 자유로워졌다).
+`v1.0:lsrr/model.py` — 슬롯 조립과 `d_model` 단일 해석 지점 아이디어는 계승. 단 `_resolve_d_model`의 `d_model = d_in` 강제는 폐지한다 (ADR-003: 융합 앵커가 백본 원본 공간으로 이동해 `d_model`이 자유로워졌다).
 
 ## 상태
 **검증** — M3 완료. `builder.py`가 전 슬롯과 `CycleRunner`·손실까지 조립하고, `model.py`가 인코딩→메모리→정제→판독 전 경로를 잇는다.

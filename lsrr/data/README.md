@@ -42,9 +42,9 @@ render_answer(sample)   -> str          # 손실·생성 대상
 
 ## 레거시 참조
 전부 **이식** 가능하며 잘 만들어져 있다.
-- `Legacy_LSRR/lsrr/data/{schema,collate,answer_scoring,cache}.py`
-- `Legacy_LSRR/scripts/download_data.py` — SHA-256 검증과 upstream 커밋 고정, GSM8K-Aug의 coconut 스키마 변환. 로직을 `download.py`로 옮기고 스크립트는 얇게.
-- `Legacy_LSRR/tests/{test_cache,test_gsm8k,test_download_data,test_target_padding}.py`
+- `v1.0:lsrr/data/{schema,collate,answer_scoring,cache}.py`
+- `v1.0:scripts/download_data.py` — SHA-256 검증과 upstream 커밋 고정, GSM8K-Aug의 coconut 스키마 변환. 로직을 `download.py`로 옮기고 스크립트는 얇게.
+- `v1.0:tests/{test_cache,test_gsm8k,test_download_data,test_target_padding}.py`
 
 ## 상태
 **검증(부분)** — `schema`·`prompting`(M2)·`collate`(M3) 완료. `scoring`·`cache`·`download`는 M5~M6.

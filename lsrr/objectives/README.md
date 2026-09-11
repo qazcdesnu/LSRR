@@ -5,7 +5,7 @@
 
 $$L = L_{NLL} + \lambda_{ds}L_{DeepSup} + \lambda_{reg}L_{VarReg}\ (+\ \lambda_{KD}L_{KD}:\text{ablation 전용})$$
 
-학습 대상은 **레이어 어댑터 + SSM 엔진 + 풀링/융합 헤드**뿐이다 (백본 대비 약 3% 이내). 백본은 완전 동결하며 LoRA도 쓰지 않는다.
+Phase A 의 학습 대상은 **레이어 어댑터 + SSM 엔진 + 풀링/융합 헤드**뿐이다 (백본 대비 약 3% 이내). Phase B 는 엔진을 얼리고 **방출기(emitter) + LoRA 델타**를 학습한다 (v2.1 §5.0, ADR-014). 어느 페이즈든 백본 **base** 가중치는 동결이다.
 
 ## 경계
 - **한다:** 손실 항 계산, 타깃 마스킹, 가중 합성, 항별 지표 분리 보고.
@@ -54,7 +54,7 @@ $$L_{DeepSup} = \sum_{m\in S} w_m \cdot \mathrm{NLL}(\text{answer} \mid h_{fusio
 `core`, `recurrence`(TBPTT 윈도 경계 조회). (L3.)
 
 ## 레거시 참조
-`Legacy_LSRR/lsrr/losses/composite.py` — **개작(파일 분할)**. `AnswerNLLLoss`와 `StateVarianceRegLoss`는 이식. `DeepSupervisionLoss`는 (i) 윈도 경계 인식 (ii) γ 가중 (iii) 모듈 객체 대신 사전 계산된 사이클별 로짓 수신으로 개작한다. `_loss_targets`의 `labels`/`target_ids` 구분은 `targets.py`로 승격.
+`v1.0:lsrr/losses/composite.py` — **개작(파일 분할)**. `AnswerNLLLoss`와 `StateVarianceRegLoss`는 이식. `DeepSupervisionLoss`는 (i) 윈도 경계 인식 (ii) γ 가중 (iii) 모듈 객체 대신 사전 계산된 사이클별 로짓 수신으로 개작한다. `_loss_targets`의 `labels`/`target_ids` 구분은 `targets.py`로 승격.
 
 ## 상태
 **검증(부분)** — `targets`·`answer_nll`·`composite`(M3), `deep_supervision`(M5) 완료.

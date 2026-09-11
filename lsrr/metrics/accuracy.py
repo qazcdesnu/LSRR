@@ -4,7 +4,7 @@
 첫 EOS에서 절단, 정규화 후 최종 답만 비교.** 생성 중간에 정답이 등장했다는 이유로
 정답 처리하지 않는다 — 그렇게 하면 정확도가 부풀고 외부 공표치와 비교가 깨진다.
 
-개작: Legacy_LSRR/lsrr/data/answer_scoring.py
+개작: v1.0:lsrr/data/answer_scoring.py
 """
 
 from __future__ import annotations

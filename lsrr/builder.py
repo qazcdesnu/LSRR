@@ -4,7 +4,7 @@
 직접 만들지 않는다 — 그것이 "어떤 부품도 다른 부품의 구체 타입을 모른다"는
 컴포넌트화의 실질이다 (ARCHITECTURE.md §5).
 
-개작: Legacy_LSRR/lsrr/model.py (슬롯 조립·단일 d_model 해석 지점 계승,
+개작: v1.0:lsrr/model.py (슬롯 조립·단일 d_model 해석 지점 계승,
 `_resolve_d_model`의 d_model=d_in 강제는 폐지 — ADR-003)
 """
 

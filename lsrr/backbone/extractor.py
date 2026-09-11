@@ -6,7 +6,7 @@
 뽑는다. 좌측 패딩을 쓰므로(ADR-011) 모든 샘플의 마지막 실토큰이 인덱스 -1에
 놓이고, 인덱싱이 단순해진다.
 
-개작: Legacy_LSRR/lsrr/backbones/extractor.py
+개작: v1.0:lsrr/backbones/extractor.py
 """
 
 from __future__ import annotations

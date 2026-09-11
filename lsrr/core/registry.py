@@ -6,7 +6,7 @@
 레지스트리 키는 **설정 파일에 쓰는 이름**이며 클래스 이름과 독립적으로 안정적이다.
 한 번 논문 표에 실린 키는 바꾸지 않는다 (CONVENTIONS.md §1.1).
 
-이식: Legacy_LSRR/lsrr/registry.py (시그니처 기반 kwargs 필터링·별칭 등록 계승)
+이식: v1.0:lsrr/registry.py (시그니처 기반 kwargs 필터링·별칭 등록 계승)
 """
 
 from __future__ import annotations

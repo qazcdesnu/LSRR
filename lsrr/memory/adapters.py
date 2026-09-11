@@ -6,7 +6,7 @@
 
 정렬 없이 레이어 축을 스캔하면 그 축은 의미 있는 시퀀스가 아니다.
 
-이식: Legacy_LSRR/lsrr/adapters/layer_adapter.py
+이식: v1.0:lsrr/adapters/layer_adapter.py
 """
 
 from __future__ import annotations

@@ -34,7 +34,7 @@
 - 실패는 조용히 넘기지 않는다 — 비영 종료 코드와 명확한 예외 메시지.
 
 ## 레거시 참조
-`Legacy_LSRR/scripts/` — **개작**. 스크립트 이름과 CLI 규약은 계승하되, 로직을 패키지로 옮기고 래퍼만 남긴다. `eval_backbone_direct.py`는 거의 그대로 이식.
+`v1.0:scripts/` — **개작**. 스크립트 이름과 CLI 규약은 계승하되, 로직을 패키지로 옮기고 래퍼만 남긴다. `eval_backbone_direct.py`는 거의 그대로 이식.
 
 ## 상태
 검증 — 진입점·진단·스윕·slurm 배선 완료. 나머지(`download_data`·`profile_cost`·`analyze`·`make_report`)는 계획

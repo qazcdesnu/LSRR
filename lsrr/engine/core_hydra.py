@@ -23,7 +23,7 @@ Hydra (Hwang, Lahoti, Dao, Gu; arXiv:2407.09941)를 따른다. 참조 구현은 
 갈리므로 Ablation C가 quasiseparable 구조를 분리해 측정한다 — 스킵 파라미터화와
 교락되지 않는다.
 
-이식: Legacy_LSRR/lsrr/engines/hydra_qs.py
+이식: v1.0:lsrr/engines/hydra_qs.py
 """
 
 from __future__ import annotations

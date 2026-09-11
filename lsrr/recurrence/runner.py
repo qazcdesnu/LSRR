@@ -7,7 +7,7 @@
 이 파일은 **사이클 축만** 본다. 엔진 내부(`forward_step`만 호출)도, 종료 규칙
 내부(`should_stop`만 호출)도 모른다.
 
-개작: Legacy_LSRR/lsrr/iteration/controller.py (3분할, ADR-005)
+개작: v1.0:lsrr/iteration/controller.py (3분할, ADR-005)
 """
 
 from __future__ import annotations

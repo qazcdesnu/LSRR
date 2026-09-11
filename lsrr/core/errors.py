@@ -108,7 +108,7 @@ class MissingTargetError(LSRRError):
     """정답이 없는 배치.
 
     건너뛰면 자유형 데이터셋에서 100%, 수치형에서 0%가 조용히 보고된다.
-    치명적 실패로 던진다 (Legacy_LSRR 교훈, LEGACY_MAP.md §3).
+    치명적 실패로 던진다 (v1.0 교훈, LEGACY_MAP.md §3).
     """
 
 

@@ -2,7 +2,7 @@
 
 시드에서 생성하므로 다운로드가 필요 없다. Phase 0의 두 무대 중 하나다.
 
-이식: Legacy_LSRR/lsrr/data/multiplication.py
+이식: v1.0:lsrr/data/multiplication.py
 """
 
 from __future__ import annotations

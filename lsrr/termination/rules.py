@@ -5,7 +5,7 @@
 
 모든 규칙은 `TerminationRuleBase`를 상속하므로 M_max 폴백을 자동으로 갖는다 (I5).
 
-개작: Legacy_LSRR/lsrr/termination/rules.py
+개작: v1.0:lsrr/termination/rules.py
 """
 
 from __future__ import annotations

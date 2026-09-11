@@ -12,13 +12,13 @@
 
 | 문서 | 내용 |
 |---|---|
-| [`documents/Research_Proposal.md`](documents/Research_Proposal.md) | 연구계획서 — 무엇을 주장하고 무엇을 증명해야 하는가 |
+| [`documents/Research_Proposal_v2.1.md`](documents/Research_Proposal_v2.1.md) | **연구계획서 (정본)** — 무엇을 주장하고 무엇을 증명해야 하는가. 구판은 `documents/archive/` |
 | [`documents/ARCHITECTURE.md`](documents/ARCHITECTURE.md) | **시스템 아키텍처 — 여기서 시작** |
 | [`documents/MODULE_INDEX.md`](documents/MODULE_INDEX.md) | 모듈 인덱스 (지속 갱신 상태판) |
 | [`documents/DESIGN_DECISIONS.md`](documents/DESIGN_DECISIONS.md) | 설계 결정 기록 (ADR) |
 | [`documents/FINDINGS.md`](documents/FINDINGS.md) | **실측 기록** — 구현 중 측정된 사실과 미해소 위험 |
 | [`documents/CONVENTIONS.md`](documents/CONVENTIONS.md) | 코드베이스 규약 |
-| [`documents/LEGACY_MAP.md`](documents/LEGACY_MAP.md) | `Legacy_LSRR` 참조 지도 |
+| [`documents/LEGACY_MAP.md`](documents/LEGACY_MAP.md) | v1.0 참조 지도 — 무엇을 이식/개작/폐기했는가 |
 | [`documents/ROADMAP.md`](documents/ROADMAP.md) | 구현 로드맵과 게이트 |
 
 각 폴더의 `README.md`가 그 폴더의 역할·경계·모듈·계약을 설명한다.
@@ -48,13 +48,12 @@
 | `scripts/` | CLI 진입점 (얇은 래퍼) |
 | `tests/` | 계약·단위·통합·회귀 테스트 |
 | `runs/`, `caches/` | 산출물 (버전 관리 제외) |
-| `Legacy_LSRR/` | **읽기 전용 참조 구현. 수정 금지.** |
 
 ---
 
 ## 지켜야 할 것
 
-1. **`Legacy_LSRR/`은 절대 수정하지 않는다.** 참조는 자유롭게 하되, 가져온 것은 `LEGACY_MAP.md`에 이식/개작/폐기 판정과 함께 기록한다. 원본은 별도 경로에서 관리되므로 이 사본은 [폐기 계획](documents/ROADMAP.md#legacy_lsrr-폐기-계획)의 시점에 편하게 지운다 (M4 후 산출물, M7 후 전체).
+1. **작업은 `v1.1` 브랜치에 한다.** `main` 은 공개 기준점이며, 큰 진전마다 fast-forward 로 병합한다. 레거시(v1.0) 참조는 `git show v1.0:<경로>` 로 하고, 가져온 것은 `LEGACY_MAP.md`에 이식/개작/폐기 판정과 함께 기록한다 (`CONVENTIONS.md` §6·§8).
 2. **폴더를 만들면 같은 커밋에 그 폴더의 `README.md`를 만든다.** 모듈을 바꾸면 폴더 README와 `MODULE_INDEX.md`를 함께 갱신한다.
 3. **설계 변경은 코드보다 ADR이 먼저다.**
 4. **불변식 I1–I8**([ARCHITECTURE §4](documents/ARCHITECTURE.md#4-불변식-invariants))은 계약 테스트로 강제한다. 테스트 없는 불변식은 존재하지 않는 것으로 간주한다.
