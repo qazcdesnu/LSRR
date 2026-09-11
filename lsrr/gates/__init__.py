@@ -6,7 +6,7 @@
 from lsrr.gates.criteria import (
     GateResult,
     gate_anytime_increasing,
-    gate_beats_onepass,
+    gate_beats_baseline,
     gate_delta_decreasing,
     gate_no_collapse,
 )
@@ -17,7 +17,7 @@ __all__ = (
     "GateResult",
     "gate_no_collapse",
     "gate_anytime_increasing",
-    "gate_beats_onepass",
+    "gate_beats_baseline",
     "gate_delta_decreasing",
     "PHASE_0",
     "PHASES",

@@ -25,7 +25,7 @@ from lsrr.gates import (
     Phase0Thresholds,
     build_report,
     gate_anytime_increasing,
-    gate_beats_onepass,
+    gate_beats_baseline,
     gate_delta_decreasing,
     gate_no_collapse,
 )
@@ -89,24 +89,24 @@ def test_single_point_curve_cannot_pass():
 # ---------------------------------------------------------------- ③ 킬 스위치
 
 def test_significant_advantage_passes():
-    r = gate_beats_onepass([0.315, 0.298, 0.324], [0.221, 0.213, 0.235])
+    r = gate_beats_baseline([0.315, 0.298, 0.324], [0.221, 0.213, 0.235])
     assert r.passed and r.is_kill_switch
 
 
 def test_no_advantage_triggers_kill_switch():
-    r = gate_beats_onepass([0.224, 0.219, 0.231], [0.221, 0.226, 0.218])
+    r = gate_beats_baseline([0.224, 0.219, 0.231], [0.221, 0.226, 0.218])
     assert not r.passed and r.is_kill_switch and r.evaluated
 
 
 def test_worse_than_baseline_never_passes():
     """대조가 더 좋으면 p 값이 어떻든 통과하지 않는다 (단측 판정)."""
-    r = gate_beats_onepass([0.10, 0.11, 0.09], [0.30, 0.31, 0.29])
+    r = gate_beats_baseline([0.10, 0.11, 0.09], [0.30, 0.31, 0.29])
     assert not r.passed
 
 
 def test_single_seed_is_not_a_verdict():
     """단일 시드 판정을 허용하면 잡음으로 킬 스위치가 통과할 수 있다."""
-    r = gate_beats_onepass([0.9], [0.1])
+    r = gate_beats_baseline([0.9], [0.1])
     assert not r.passed
     assert not r.evaluated, "데이터 부족은 '측정된 실패'가 아니다"
 
@@ -246,8 +246,8 @@ def test_cli_reports_pass(tmp_path):
         collapse={"effective_rank": 8.4, "mean_similarity": 0.21, "variance_ratio": 0.83},
         anytime={"0": 0.11, "1": 0.19, "2": 0.24, "3": 0.31},
         traj=[[2.85 / (2**m) for m in range(10)] for _ in range(20)],
-        hydra=[0.315, 0.298, 0.324],
-        mlp=[0.221, 0.213, 0.235],
+        hydra=[0.315, 0.298, 0.324, 0.309, 0.318],
+        mlp=[0.221, 0.213, 0.235, 0.226, 0.219],
     )
     code, out = _run_cli(runs, tmp_path / "v.json")
     assert code == 0, out
@@ -264,8 +264,8 @@ def test_cli_signals_kill_switch_with_exit_code_2(tmp_path):
         collapse={"effective_rank": 1.4, "mean_similarity": 0.99, "variance_ratio": 0.02},
         anytime={"0": 0.22, "1": 0.221, "2": 0.219, "3": 0.222},
         traj=[[1.0 + 0.4 * math.sin(m * 2.1) for m in range(12)] for _ in range(10)],
-        hydra=[0.224, 0.219, 0.231],
-        mlp=[0.221, 0.226, 0.218],
+        hydra=[0.224, 0.219, 0.231, 0.227, 0.222],
+        mlp=[0.221, 0.226, 0.218, 0.223, 0.220],
     )
     code, out = _run_cli(runs, tmp_path / "v.json")
     assert code == 2, out
@@ -285,10 +285,12 @@ def test_cli_without_data_is_incomplete_not_pass(tmp_path):
 
 
 def test_thresholds_are_overridable_but_default_is_canonical():
-    assert Phase0Thresholds().min_seeds == 3
-    cfg = {"gates": {"phase0": {"alpha": 0.01, "min_seeds": 5}}}
+    # 3 → 5 로 올렸다: 1자리 실측에서 차이 17.5%p, d=1.31 인데도 p=0.0543 으로
+    # 게이트 ③ 이 떨어졌다 (F-016 의 반대편 — 검정력 부족).
+    assert Phase0Thresholds().min_seeds == 5
+    cfg = {"gates": {"phase0": {"alpha": 0.01, "min_seeds": 3}}}
     th = Phase0Thresholds.from_config(cfg)
-    assert th.alpha == 0.01 and th.min_seeds == 5
+    assert th.alpha == 0.01 and th.min_seeds == 3
     assert th.min_converged_ratio == Phase0Thresholds().min_converged_ratio
 
 
@@ -304,7 +306,7 @@ def test_tiny_difference_cannot_pass_the_kill_switch():
 
     hydra = [0.2247 + 0.006 * math.sin(i) for i in range(3)]
     mlp = [0.2217 + 0.004 * math.cos(i) for i in range(3)]
-    r = gate_beats_onepass(hydra, mlp)
+    r = gate_beats_baseline(hydra, mlp)
     assert r.evidence["p_value"] < 0.05, "p값 자체는 유의하다"
     assert r.evidence["effect_size"] > 0.5, "효과크기 자체도 기준을 넘는다"
     assert not r.passed, "그럼에도 절대 차이가 작아 통과하면 안 된다"
@@ -312,10 +314,10 @@ def test_tiny_difference_cannot_pass_the_kill_switch():
 
 
 def test_meaningful_difference_still_passes():
-    assert gate_beats_onepass([0.315, 0.298, 0.324], [0.221, 0.213, 0.235]).passed
+    assert gate_beats_baseline([0.315, 0.298, 0.324], [0.221, 0.213, 0.235]).passed
 
 
 def test_min_difference_is_configurable():
     hydra, mlp = [0.23, 0.232, 0.229], [0.221, 0.223, 0.220]
-    assert not gate_beats_onepass(hydra, mlp, min_difference=0.05).passed
-    assert gate_beats_onepass(hydra, mlp, min_difference=0.005).passed
+    assert not gate_beats_baseline(hydra, mlp, min_difference=0.05).passed
+    assert gate_beats_baseline(hydra, mlp, min_difference=0.005).passed

@@ -46,12 +46,25 @@ class BackboneContinuationReadout(BaseReadoutPath):
         calibration: str = "learned_rms",
         target_rms: Optional[float] = None,
         max_new_tokens: int = 32,
+        emission: str = "trajectory",
         **_: Any,
     ) -> None:
         super().__init__()
         self.fusion = fusion
         self.d_in = d_in
         self.max_new_tokens = max_new_tokens
+        if emission not in ("single", "trajectory"):
+            raise AssemblyError(
+                f"emission '{emission}'를 모른다. single(v1 단일 벡터) 또는 "
+                f"trajectory(v2 궤적) 여야 한다."
+            )
+        #: 방출 구조 — **Ablation A 의 스윕 축** (ADR-015·ADR-016).
+        #:   single      마지막 상태에서 토큰 1개. v1 대조군.
+        #:   trajectory  사이클마다 토큰 1개씩, 총 M 개. v2 기본.
+        #: 토큰 개수 M 자체는 `termination` 이 정한다 — `fixed_m` 이면 고정 K,
+        #: `delta_state` 면 동적 M. 즉 Ablation A 의 세 조건이 이 두 축의
+        #: 조합으로 표현되며, 별도 코드 경로가 없다 (ADR-009).
+        self.emission = emission
         # 백본은 nn.Module 자식으로 등록하지 않는다 (I1)
         object.__setattr__(self, "answer_head", answer_head)
 

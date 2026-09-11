@@ -283,8 +283,14 @@ class BaseReadoutPath(nn.Module, ABC):
         context: ContextBundle,
         answer_ids: Optional[torch.Tensor] = None,
         m: Optional[int] = None,
+        prefix: Optional[Sequence[torch.Tensor]] = None,
     ) -> ReadoutResult:
-        """정제 상태에서 답을 판독한다."""
+        """정제 상태에서 답을 판독한다.
+
+        Args:
+            prefix: 주면 `[*prefix, R]` 을 궤적으로 방출한다 (ADR-015). None 이면
+                `R` 하나만 주입한다 — v1 단일 벡터 거동.
+        """
 
 
 # ---------------------------------------------------------------- 손실 (L3)

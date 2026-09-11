@@ -194,6 +194,31 @@ def check_budget_match(cfg: Any) -> list[str]:
     return warnings
 
 
+#: `readout` 바로 아래 허용되는 키. 그 밖의 키는 빌더가 읽지 않으므로
+#: 조용히 무시되고, 의도한 것과 다른 실험이 돈다.
+_READOUT_KEYS = {"fusion", "path", "calibration", "target_rms"}
+
+
+def check_readout_keys(cfg: Any) -> None:
+    """`readout` 하위의 오배치 키를 로드 시점에 잡는다.
+
+    빌더는 `readout.path` 와 `readout.fusion` 만 슬롯으로 읽는다. 예컨대
+    `readout.emission` 을 최상위에 두면 **아무 오류 없이 무시되고** 기본값으로
+    실험이 돈다 — Ablation A 의 조건이 소리 없이 바뀌는 형태다 (F-028).
+    """
+    node = get_path(cfg, "readout")
+    if node is None:
+        return
+    keys = set(dict(node).keys()) if hasattr(node, "keys") else set()
+    unknown = sorted(keys - _READOUT_KEYS)
+    _require(
+        not unknown,
+        f"readout 아래 알 수 없는 키: {unknown}. 허용: {sorted(_READOUT_KEYS)}. "
+        f"판독 경로 설정은 readout.path 아래에 둔다 — 여기 두면 빌더가 읽지 않아 "
+        f"조용히 무시된다.",
+    )
+
+
 def check_experimental_flags(cfg: Any) -> list[str]:
     """I2 예외(재인코딩 외부 루프)를 눈에 띄게 만든다 (ADR-010)."""
     warnings: list[str] = []
@@ -245,6 +270,7 @@ VALIDATORS = (
     check_deep_supervision,
     check_termination_signal,
     check_budget_match,
+    check_readout_keys,
 )
 
 WARNERS = (

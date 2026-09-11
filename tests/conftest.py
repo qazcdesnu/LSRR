@@ -256,12 +256,19 @@ class DummyReadout(BaseReadoutPath):
         context: ContextBundle,
         answer_ids: Optional[torch.Tensor] = None,
         m: Optional[int] = None,
+        prefix: Optional[Sequence[torch.Tensor]] = None,
     ) -> ReadoutResult:
         self.call_count += 1
-        h_fusion, alpha = self.fusion(R, h_ctx)
+        states = [*prefix, R] if prefix else [R]
+        fused = [self.fusion(st, h_ctx) for st in states]
+        trajectory = torch.stack([h for h, _ in fused], dim=1)
+        h_fusion, alpha = fused[-1]
         T = answer_ids.shape[1] if answer_ids is not None else 1
         logits = self.head(h_fusion).unsqueeze(1).expand(-1, T, -1)
-        return ReadoutResult(logits=logits, h_fusion=h_fusion, alpha=alpha, m=m)
+        return ReadoutResult(
+            logits=logits, h_fusion=h_fusion, alpha=alpha, m=m,
+            h_thought=trajectory,
+        )
 
 
 @DATA_REGISTRY.register("_dummy_data")

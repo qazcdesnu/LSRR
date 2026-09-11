@@ -108,29 +108,38 @@ def gate_anytime_increasing(
     )
 
 
-def gate_beats_onepass(
-    hydra_seeds: Sequence[float],
-    mlp_seeds: Sequence[float],
+def gate_beats_baseline(
+    treatment_seeds: Sequence[float],
+    control_seeds: Sequence[float],
     alpha: float = 0.05,
     min_effect: float = 0.5,
     min_difference: float = 0.01,
+    treatment_name: str = "treatment",
+    control_name: str = "control",
 ) -> GateResult:
-    """③ H+MLP 1회 통과 대비 유의한 우위 — **킬 스위치**.
+    """③ 내부 베이스라인 대비 유의한 우위 — **킬 스위치**.
+
+    판정 대상은 Phase 정의가 정한다 (ADR-016).
+      v1: `hydra_qs` vs `mlp_onepass` — 반복 정제가 1회 통과보다 나은가
+      v2: 동적 M 궤적 vs 단일 벡터 — 궤적 방출이 압축보다 나은가
 
     시드가 조건당 2개 미만이면 판정하지 않고 FAIL로 둔다. 단일 시드 판정을
     허용하면 잡음으로 킬 스위치가 통과할 수 있다.
     """
     try:
-        cmp = welch_ttest(hydra_seeds, mlp_seeds)
+        cmp = welch_ttest(treatment_seeds, control_seeds)
     except ValueError as e:
         return GateResult(
             gate_id="③",
-            name="H+MLP 1회 통과 대비 유의한 우위",
+            name="내부 베이스라인 대비 유의한 우위",
             passed=False,
             detail=f"판정 불가: {e}",
             is_kill_switch=True,
             evaluated=False,
-            evidence={"hydra_n": len(hydra_seeds), "mlp_n": len(mlp_seeds)},
+            evidence={
+                "treatment_n": len(treatment_seeds),
+                "control_n": len(control_seeds),
+            },
         )
 
     ok = cmp.is_significant(
@@ -138,11 +147,11 @@ def gate_beats_onepass(
     )
     return GateResult(
         gate_id="③",
-        name="H+MLP 1회 통과 대비 유의한 우위",
+        name="내부 베이스라인 대비 유의한 우위",
         passed=ok,
         detail=(
-            f"hydra_qs {cmp.treatment.mean:.4f}±{cmp.treatment.std:.4f} "
-            f"(n={cmp.treatment.n}) vs mlp_onepass {cmp.control.mean:.4f}±"
+            f"{treatment_name} {cmp.treatment.mean:.4f}±{cmp.treatment.std:.4f} "
+            f"(n={cmp.treatment.n}) vs {control_name} {cmp.control.mean:.4f}±"
             f"{cmp.control.std:.4f} (n={cmp.control.n}) → "
             f"차이 {cmp.difference:+.4f} (기준 ≥{min_difference}), "
             f"p={cmp.p_value:.4f} (기준 <{alpha}), "
@@ -153,8 +162,10 @@ def gate_beats_onepass(
             "difference": cmp.difference,
             "p_value": cmp.p_value,
             "effect_size": cmp.effect_size,
-            "hydra_mean": cmp.treatment.mean,
-            "mlp_mean": cmp.control.mean,
+            "treatment_mean": cmp.treatment.mean,
+            "control_mean": cmp.control.mean,
+            "treatment": treatment_name,
+            "control": control_name,
         },
     )
 
@@ -201,7 +212,7 @@ def gate_delta_decreasing(
 __all__ = (
     "GateResult",
     "gate_anytime_increasing",
-    "gate_beats_onepass",
+    "gate_beats_baseline",
     "gate_delta_decreasing",
     "gate_no_collapse",
 )

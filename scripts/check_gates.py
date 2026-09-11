@@ -45,7 +45,7 @@ from lsrr.gates import (
     Phase0Thresholds,
     build_report,
     gate_anytime_increasing,
-    gate_beats_onepass,
+    gate_beats_baseline,
     gate_delta_decreasing,
     gate_no_collapse,
 )
@@ -137,7 +137,7 @@ def evaluate_kill_switch(
             f"조건당 {th.min_seeds}개 필요)",
             kill=True,
         )
-    return gate_beats_onepass(
+    return gate_beats_baseline(
         hydra, mlp, th.alpha, th.min_effect_size, th.min_difference
     )
 

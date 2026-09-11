@@ -1,0 +1,60 @@
+# Ablation A — 사고 토큰 방출 구조 (v2.1 §7.1-1)
+#
+# v2 의 최소 주장이자 **킬 스위치** (ADR-016):
+#   "궤적을 시퀀스로 방출하는 것이 단일 벡터로 접는 것보다 낫다"
+#
+# 세 조건이 기존 두 축의 조합으로 표현된다 — 별도 코드 경로가 없다 (ADR-009).
+#
+#   조건          readout.path.emission  termination.type  readout.fusion.anchor
+#   single (v1)   single            delta_state       ctx    ← 대조군
+#   fixed_k       trajectory        fixed_m           first
+#   dynamic_m     trajectory        delta_state       first  ← v2 기본
+#
+# **대조군의 앵커는 ctx 다.** v1 은 잔차 융합이 유효했고 실측으로 작동이
+# 확인된 설계이므로(F-009), 대조군까지 바꾸면 이 절제가 "방출 구조 비교"가
+# 아니라 "융합식 비교"로 오염된다 (ADR-015).
+defaults: [base, backbone/gpt2, data/multiplication]
+
+data:
+  digits: 2
+  sizes: {train: 50000, val: 500, test: 500}
+
+memory:
+  adapter:
+    d_model: 256
+
+engine:
+  type: hydra_qs
+  d_state: 16
+  n_blocks: 2
+
+recurrence:
+  schedule: {type: lognormal, mean: 5, max: 8}
+  tbptt_k: 4
+
+termination:
+  type: delta_state
+  eps: 0.05
+  m_min: 1
+  m_max: 8
+
+readout:
+  path:
+    emission: trajectory
+  fusion:
+    anchor: first
+
+train:
+  epochs: 20
+  bs: 16
+  lr: 1.0e-3
+  log_every: 200
+
+prompt:
+  max_question_tokens: 32
+  max_answer_tokens: 12
+
+# 게이트 ③ 은 조건당 시드 5개를 요구한다 (F-016 의 반대편 — 검정력 부족).
+gates:
+  phase0:
+    min_seeds: 5

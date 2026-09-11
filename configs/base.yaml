@@ -66,6 +66,10 @@ readout:
   path:
     type: backbone_continuation   # 학습 디코더 없음 (ADR-001)
     max_new_tokens: 32
+    # 방출 구조 — Ablation A 의 축 (ADR-015·ADR-016)
+    #   trajectory  사이클마다 토큰 1개씩 (v2 기본). 개수 M 은 termination 이 정한다
+    #   single      마지막 상태에서 토큰 1개 (v1 대조군)
+    emission: trajectory
 
 objective:
   answer_nll:

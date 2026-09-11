@@ -23,6 +23,22 @@ from lsrr.core.invariants import EncodeCounter, assert_injection_space
 from lsrr.core.types import ContextBundle, ReasoningTrace
 
 
+class _TrajectoryCollector:
+    """사이클별 정제 상태를 모은다 — 궤적 방출의 입력 (ADR-015).
+
+    훅으로 받는 이유는 `recurrence` 가 방출 구조를 몰라야 하기 때문이다.
+    사이클 축과 판독 축의 분리를 유지한다 (ADR-005).
+    """
+
+    def __init__(self) -> None:
+        self.states: list[torch.Tensor] = []
+
+    def on_cycle(
+        self, m: int, R_m: torch.Tensor, R_next: torch.Tensor, diagnostics: Any
+    ) -> None:
+        self.states.append(R_next)
+
+
 class LSRRModel(nn.Module):
     """Layer-State Recurrent Reasoner.
 
@@ -162,20 +178,31 @@ class LSRRModel(nn.Module):
             else self.runner.run_train(R0, hooks=hooks, M=M)
         )
 
+    @property
+    def _emits_trajectory(self) -> bool:
+        """판독 경로가 궤적을 방출하는가 (Ablation A 의 축)."""
+        return getattr(self.readout, "emission", "single") == "trajectory"
+
     def read(
         self,
         R: torch.Tensor,
         context: ContextBundle,
         answer_ids: Optional[torch.Tensor] = None,
         m: Optional[int] = None,
+        prefix: Optional[Sequence[torch.Tensor]] = None,
     ) -> Any:
-        """전 사이클 공유 판독 경로 호출 (I3)."""
+        """전 사이클 공유 판독 경로 호출 (I3).
+
+        `prefix` 를 주면 `[*prefix, R]` 를 궤적으로 방출한다 (ADR-015).
+        """
         if self.readout is None:
             raise AssemblyError("판독 경로가 조립되지 않았다.")
         result = self.readout.readout(
-            R, context.h_ctx, context, answer_ids=answer_ids, m=m
+            R, context.h_ctx, context, answer_ids=answer_ids, m=m, prefix=prefix
         )
-        if result.h_fusion is not None:
+        if result.h_thought is not None:
+            assert_injection_space(result.h_thought, self.d_in)  # I8 (시퀀스)
+        elif result.h_fusion is not None:
             assert_injection_space(result.h_fusion, self.d_in)  # I8
         return result
 
@@ -202,17 +229,27 @@ class LSRRModel(nn.Module):
         context = self.encode(batch["input_ids"], batch.get("attention_mask"))
         R0 = self.build_memory(context)
 
-        trace = self.refine(R0, hooks=hooks, is_eval=is_eval)
+        # 궤적 방출이면 사이클별 상태를 모아야 한다 (ADR-015). 훅으로 모으므로
+        # runner 는 방출 구조를 모른다 — 축의 분리를 유지한다.
+        collector = _TrajectoryCollector() if self._emits_trajectory else None
+        all_hooks = [*hooks, collector] if collector is not None else list(hooks)
+
+        trace = self.refine(R0, hooks=all_hooks, is_eval=is_eval)
         trace.R0 = R0
         trace.h_ctx = context.h_ctx
 
+        R_final = trace.R_star if trace.R_star is not None else R0
+        prefix = collector.states[:-1] if collector and collector.states else None
+
         readout = self.read(
-            trace.R_star if trace.R_star is not None else R0,
+            R_final,
             context,
             answer_ids=batch.get("target_ids"),
+            prefix=prefix,
         )
         trace.logits = readout.logits
         trace.h_fusion = readout.h_fusion
+        trace.h_thought = readout.h_thought
         trace.alpha = readout.alpha
         trace.meta.setdefault("encode_count", self.encode_counter.count)
         return trace
