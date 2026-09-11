@@ -1,0 +1,11 @@
+# 2원화 학습 배선 확인 — 끝까지 도는가, LoRA 가 실제로 학습되는가만 본다.
+defaults: [exp/prosqa_2phase]
+
+data:
+  sizes: {train: 500, val: 100, test: 100}
+
+train:
+  log_every: 20
+  phases:
+    - {name: A, epochs: 1, lr: 1.0e-3, trainable: [engine, memory, emitter]}
+    - {name: B, epochs: 1, lr: 1.0e-4, trainable: [emitter, lora]}

@@ -17,7 +17,7 @@
 
 평가가 끝나면 판정은 별개다:
     python scripts/check_gates.py --run runs/<run_id> --runs-dir runs \\
-        --hydra-glob '...' --mlp-glob '...'
+        --treatment-glob '*dynamic_m*' --control-glob '*single_v1*'
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -41,6 +42,14 @@ from lsrr.model import LSRRModel
 from lsrr.runtime import resolve_device, set_seed
 
 
+def _lora_cfg(cfg) -> Optional[dict]:
+    """설정의 `backbone.lora` 절. Phase B 체크포인트 적재에 필요하다 (ADR-014)."""
+    from omegaconf import OmegaConf
+
+    node = get_path(cfg, "backbone.lora", None)
+    return OmegaConf.to_container(node, resolve=True) if node is not None else None
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
@@ -49,6 +58,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--split", default="val")
     ap.add_argument("--limit", type=int, default=None, help="평가 샘플 수 상한")
     ap.add_argument("--anytime-batches", type=int, default=1)
+    ap.add_argument("--tag", type=str, default=None,
+                    help="산출 파일명 접미사 (예: phase_A) — 한 런에서 여러 체크포인트를 평가할 때")
     ap.add_argument("--checkpoint", type=Path, default=None)
     ap.add_argument("-h", "--help", action="store_true")
     args, rest = ap.parse_known_args(argv)
@@ -67,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.checkpoint is not None:
         from lsrr.runtime import load_checkpoint
 
-        load_checkpoint(model, args.checkpoint)
+        load_checkpoint(model, args.checkpoint, lora_cfg=_lora_cfg(cfg))
         print(f"[평가] 체크포인트: {args.checkpoint}")
     else:
         print("[평가] 경고: 체크포인트 없이 초기 가중치를 평가한다.")
@@ -118,19 +129,22 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.run is not None:
         args.run.mkdir(parents=True, exist_ok=True)
-        (args.run / "metrics.json").write_text(
+        # 2원화 학습은 한 런에서 두 체크포인트를 평가한다 (§5.0). 접미사가 없으면
+        # Phase B 평가가 Phase A 결과를 덮어써 Ablation B 의 절반이 사라진다.
+        tag = f"_{args.tag}" if args.tag else ""
+        (args.run / f"metrics{tag}.json").write_text(
             json.dumps(result.metrics_payload(), indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         gate_inputs = result.gate_inputs_payload()
-        (args.run / "gate_inputs.json").write_text(
+        (args.run / f"gate_inputs{tag}.json").write_text(
             json.dumps(gate_inputs, indent=2, ensure_ascii=False), encoding="utf-8"
         )
         missing = [
             k for k in ("collapse", "anytime", "delta_trajectories")
             if k not in gate_inputs
         ]
-        print(f"[평가] 저장: {args.run}/metrics.json, gate_inputs.json")
+        print(f"[평가] 저장: {args.run}/metrics{tag}.json, gate_inputs{tag}.json")
         if missing:
             print(f"[평가] 주의: {', '.join(missing)} 가 비어 게이트가 판정 불가다.")
     return 0

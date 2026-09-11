@@ -21,6 +21,7 @@ from lsrr.data import PromptEncoder, prompt_spec_from_cfg
 from lsrr.data.collate import make_loader
 from lsrr.model import LSRRModel
 from lsrr.runtime import Trainer, parameter_summary, resolve_device, set_seed
+from lsrr.runtime.phases import apply_phase, attach_phase_lora, phases_from_cfg
 from lsrr.telemetry import ExperimentTracker
 
 
@@ -88,8 +89,40 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"모듈별: {params['by_module']}")
 
-        trainer = Trainer(model, bundle.objective, tracker, cfg, device=device)
-        result = trainer.fit(loader)
+        # 2원화 학습 (v2.1 §5.0). `train.phases` 가 없으면 단일 페이즈로 되돌린다.
+        plan = phases_from_cfg(cfg)
+        multi = len(plan) > 1 or plan[0].attach_lora
+        if multi:
+            print(f"페이즈 {len(plan)}개: "
+                  + " → ".join(f"{ph.name}({ph.epochs}ep, lr={ph.lr:g}, "
+                               f"{'+'.join(ph.trainable)})" for ph in plan))
+
+        results = []
+        for phase in plan:
+            if phase.attach_lora:
+                n = attach_phase_lora(bundle.encoder, cfg)
+                if n:
+                    print(f"[{phase.name}] LoRA 장착: {n:,} 파라미터 "
+                          f"({n / backbone_n:.2%} of 백본)")
+                    tracker.update_meta(lora_params=n)
+            groups = apply_phase(model, bundle.encoder, phase)
+            total = sum(groups["by_group"].values())
+            print(f"[{phase.name}] 학습 대상 {total:,} — {groups['by_group']}")
+            tracker.update_meta(**{f"phase_{phase.name}_trainable": groups["by_group"]})
+
+            trainer = Trainer(
+                model, bundle.objective, tracker, cfg, device=device,
+                params=groups["params"], lr=phase.lr, epochs=phase.epochs,
+                phase=phase.name if multi else None,
+            )
+            r = trainer.fit(loader)
+            print(f"[{phase.name}] 완료: {r['steps']} 스텝, {r['seconds']:.1f}초")
+            results.append(r)
+
+        result = {
+            "steps": sum(r["steps"] for r in results),
+            "seconds": sum(r["seconds"] for r in results),
+        }
         print(f"완료: {result['steps']} 스텝, {result['seconds']:.1f}초 → {tracker.dir}")
         # 기계 판독용 한 줄. 스윕이 이 줄로 런 디렉터리를 집는다 —
         # 사람이 읽는 줄을 파싱하게 두면 문구를 고칠 때 스윕이 조용히 깨진다.

@@ -217,11 +217,11 @@ def _write_run(tmp_path: Path, *, collapse, anytime, traj, hydra, mlp) -> Path:
         encoding="utf-8",
     )
     for i, a in enumerate(hydra):
-        d = runs / f"phase0_hydra_qs_s{i}"
+        d = runs / f"exp_condition_dynamic_m_seed_{i}"
         d.mkdir()
         (d / "metrics.json").write_text(json.dumps({"accuracy": a}))
     for i, a in enumerate(mlp):
-        d = runs / f"phase0_mlp_onepass_s{i}"
+        d = runs / f"exp_condition_single_v1_seed_{i}"
         d.mkdir()
         (d / "metrics.json").write_text(json.dumps({"accuracy": a}))
     return runs
@@ -232,7 +232,8 @@ def _run_cli(runs: Path, out: Path) -> tuple[int, str]:
         [
             sys.executable, str(REPO_ROOT / "scripts" / "check_gates.py"),
             "--run", str(runs / "r1"), "--runs-dir", str(runs),
-            "--hydra-glob", "phase0_hydra_qs_*", "--mlp-glob", "phase0_mlp_onepass_*",
+            "--treatment-glob", "*condition_dynamic_m*",
+            "--control-glob", "*condition_single_v1*",
             "--json", str(out),
         ],
         capture_output=True, text=True, cwd=str(REPO_ROOT),

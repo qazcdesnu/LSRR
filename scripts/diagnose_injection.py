@@ -24,6 +24,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -47,7 +48,7 @@ def _load(run_dir: Path, checkpoint: str | None):
     ckpts = sorted((run_dir / "checkpoints").glob("*.pt"))
     path = Path(checkpoint) if checkpoint else (ckpts[-1] if ckpts else None)
     if path is not None:
-        load_checkpoint(model, path)
+        load_checkpoint(model, path, lora_cfg=_lora_cfg(cfg))
     model.to(bundle.device).eval()
     return cfg, bundle, model, path
 
@@ -112,6 +113,14 @@ def dependence_stats(x: torch.Tensor) -> dict[str, float]:
         "cosine": float(off.mean()),
         "cv": deviation / max(norm, 1e-9),
     }
+
+
+def _lora_cfg(cfg) -> Optional[dict]:
+    """설정의 `backbone.lora` 절. Phase B 체크포인트 적재에 필요하다 (ADR-014)."""
+    from omegaconf import OmegaConf
+
+    node = get_path(cfg, "backbone.lora", None)
+    return OmegaConf.to_container(node, resolve=True) if node is not None else None
 
 
 def main(argv: list[str] | None = None) -> int:

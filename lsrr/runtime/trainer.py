@@ -1,7 +1,9 @@
-"""학습 루프 (제안서 §5).
+"""학습 루프 (제안서 §5, v2.1 §5.0).
 
-학습 대상은 **레이어 어댑터 + SSM 엔진 + 풀링/융합 헤드**뿐이다. 백본은 완전
-동결하며 LoRA도 쓰지 않는다.
+Phase A 의 학습 대상은 **레이어 어댑터 + SSM 엔진 + 풀링/융합 헤드**뿐이고 백본
+base 가중치는 전 과정에서 동결이다. Phase B 는 엔진을 얼리고 LoRA 델타와 방출기를
+학습한다 — LoRA 는 디코딩 전용이며 인코딩은 항상 base 다 (I9, ADR-014).
+어느 페이즈를 돌든 **무엇을 학습하는지는 `runtime/phases.py` 가 정한다.**
 
 학습 스텝의 형태 (runtime/README):
     1. backbone.encode(question)          무그래디언트, 1회 (I2)
@@ -77,6 +79,10 @@ class Trainer:
         tracker: Any,
         cfg: Any,
         device: Optional[torch.device] = None,
+        params: Optional[Sequence[nn.Parameter]] = None,
+        lr: Optional[float] = None,
+        epochs: Optional[int] = None,
+        phase: Optional[str] = None,
     ) -> None:
         self.model = model
         self.objective = objective
@@ -86,22 +92,29 @@ class Trainer:
         self.model.to(self.device)
 
         train_cfg = cfg.get("train", {}) if hasattr(cfg, "get") else {}
-        self.lr = float(train_cfg.get("lr", 3e-4))
+        # 페이즈가 있으면 그 값이 이긴다 — 페이즈마다 lr·epochs 가 다르다 (§5.0).
+        self.phase = phase
+        self.lr = float(lr if lr is not None else train_cfg.get("lr", 3e-4))
         self.weight_decay = float(train_cfg.get("weight_decay", 1e-2))
         self.grad_clip = float(train_cfg.get("grad_clip", 1.0))
-        self.epochs = int(train_cfg.get("epochs", 1))
+        self.epochs = int(epochs if epochs is not None else train_cfg.get("epochs", 1))
         self.log_every = int(train_cfg.get("log_every", 20))
         self.min_lr = float(train_cfg.get("min_lr", 1e-5))
         self.warmup_ratio = float(train_cfg.get("warmup_ratio", 0.1))
 
-        params = [p for p in model.parameters() if p.requires_grad]
-        if not params:
+        # 페이즈가 명시적으로 넘긴 목록이 있으면 그것을 쓴다. 모델 트리를 훑는
+        # 기본 경로는 **LoRA 를 놓친다** — 백본은 nn.Module 로 등록되지 않아
+        # (I1) `model.parameters()` 에 잡히지 않기 때문이다.
+        if params is None:
+            params = [p for p in model.parameters() if p.requires_grad]
+        self.params = list(params)
+        if not self.params:
             raise ValueError(
                 "학습 가능한 파라미터가 없다. 어댑터·엔진·융합 헤드가 조립되었는지 "
                 "확인하라 (제안서 §5)."
             )
         self.optimizer = torch.optim.AdamW(
-            params, lr=self.lr, weight_decay=self.weight_decay
+            self.params, lr=self.lr, weight_decay=self.weight_decay
         )
         self.scheduler: Optional[torch.optim.lr_scheduler.LambdaLR] = None
         self.global_step = 0
@@ -173,9 +186,7 @@ class Trainer:
 
         self.optimizer.zero_grad(set_to_none=True)
         losses["loss"].backward()
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            [p for p in self.model.parameters() if p.requires_grad], self.grad_clip
-        )
+        grad_norm = torch.nn.utils.clip_grad_norm_(self.params, self.grad_clip)
         self.optimizer.step()
         if self.scheduler is not None:
             self.scheduler.step()
@@ -220,12 +231,13 @@ class Trainer:
                     )
                     history.append(record)
 
+            tag = f"_{self.phase}" if self.phase else ""
             save_checkpoint(
                 self.model,
-                self.tracker.checkpoint_dir / f"epoch_{epoch}.pt",
+                self.tracker.checkpoint_dir / f"epoch{tag}_{epoch}.pt",
                 optimizer=self.optimizer,
                 step=self.global_step,
-                meta={"epoch": epoch},
+                meta={"epoch": epoch, "phase": self.phase},
             )
             # 안정된 이름으로도 남긴다. 평가·스윕이 epoch 번호를 몰라도 되게 하려면
             # 경로가 예측 가능해야 한다 — glob 으로 최신을 고르는 방식은 에폭 수가
@@ -235,16 +247,28 @@ class Trainer:
                 self.tracker.checkpoint_dir / "last.pt",
                 optimizer=self.optimizer,
                 step=self.global_step,
-                meta={"epoch": epoch},
+                meta={"epoch": epoch, "phase": self.phase},
             )
+            if self.phase:
+                # 페이즈별 종점도 따로 남긴다 — Ablation B 는 Phase A 체크포인트와
+                # Phase B 체크포인트의 비교이므로, A 가 B 에 덮이면 사라진다 (§5.0).
+                save_checkpoint(
+                    self.model,
+                    self.tracker.checkpoint_dir / f"phase_{self.phase}.pt",
+                    step=self.global_step,
+                    meta={"epoch": epoch, "phase": self.phase},
+                )
             if eval_fn is not None:
                 self.tracker.log_metrics(self.global_step, **eval_fn(epoch))
 
         # I1·I4: 학습이 끝난 뒤 백본이 그대로인지 확인한다
         encoder = getattr(self.model, "encoder", None)
         if encoder is not None:
+            has_lora = bool(getattr(encoder, "has_lora", False))
             encoder.verify_frozen()
-            assert_no_grad(encoder.model, what="backbone")
+            # Phase B 에서는 LoRA 델타에 그래디언트가 흐르는 것이 정상이다.
+            # base 파라미터는 여전히 무그래디언트여야 한다 (ADR-014).
+            assert_no_grad(encoder.model, what="backbone", allow_lora=has_lora)
 
         return {
             "steps": self.global_step,

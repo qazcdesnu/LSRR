@@ -17,6 +17,7 @@ import torch.nn as nn
 
 from lsrr.core.errors import (
     CostAccountingError,
+    EncodingNotBaseOnly,
     FrozenBackboneViolation,
     GradientPathViolation,
     InjectionSpaceError,
@@ -42,15 +43,46 @@ def freeze_module(module: nn.Module) -> nn.Module:
     return module
 
 
-def weight_hash(module: nn.Module, num_tensors: Optional[int] = None) -> str:
+def _is_lora(name: str) -> bool:
+    """LoRA 델타 파라미터인가. `backbone/lora.py` 와 같은 판별을 쓴다."""
+    return "lora_" in name
+
+
+def _base_key(name: str) -> str:
+    """PEFT 가 덧씌운 경로 조각을 벗겨 base 키로 되돌린다.
+
+    `get_peft_model` 은 모듈 이름에 `base_model.model.` 과 `base_layer.` 를
+    끼워 넣는다. 벗기지 않으면 LoRA 장착 전후의 해시가 **가중치가 그대로여도**
+    달라져, I1 검증이 거짓 위반을 보고한다.
+    """
+    for prefix in ("base_model.model.", "base_model."):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    return name.replace(".base_layer.", ".")
+
+
+def weight_hash(
+    module: nn.Module,
+    num_tensors: Optional[int] = None,
+    base_only: bool = True,
+) -> str:
     """가중치 해시. 학습 전후 대조로 I1을 검증한다.
 
     Args:
         num_tensors: 앞에서부터 몇 개의 텐서만 해싱할지. 대형 백본에서 전체
             해싱이 느릴 때 쓴다. None이면 전체.
+        base_only: LoRA 델타를 제외하고 **base 가중치 W₀만** 해싱할지 (ADR-014
+            의 I1 재정의). 기본이 True 인 이유는, Phase B 에서 어댑터가 붙어도
+            "백본은 변하지 않았다"가 여전히 검증 가능해야 하기 때문이다.
+            델타까지 넣으면 지문이 LoRA 학습마다 바뀌어 I1 이 무의미해진다.
     """
     hasher = hashlib.sha256()
-    for i, (name, tensor) in enumerate(sorted(module.state_dict().items())):
+    items = sorted(
+        (_base_key(k), v) for k, v in module.state_dict().items()
+        if not (base_only and _is_lora(k))
+    )
+    for i, (name, tensor) in enumerate(items):
         if num_tensors is not None and i >= num_tensors:
             break
         hasher.update(name.encode("utf-8"))
@@ -58,14 +90,30 @@ def weight_hash(module: nn.Module, num_tensors: Optional[int] = None) -> str:
     return hasher.hexdigest()[:16]
 
 
-def assert_frozen(module: nn.Module, what: str = "backbone") -> None:
-    """학습 가능한 파라미터가 하나도 없음을 확인한다 (I1)."""
-    trainable = [n for n, p in module.named_parameters() if p.requires_grad]
+def assert_frozen(
+    module: nn.Module, what: str = "backbone", allow_lora: bool = False
+) -> None:
+    """base 가중치에 학습 가능한 파라미터가 없음을 확인한다 (I1).
+
+    Args:
+        allow_lora: LoRA 델타 `ΔW = BA` 를 예외로 둘지 (ADR-014 의 I1 재정의).
+            델타는 base 텐서를 갱신하지 않는 **별도 파라미터**이며 Phase B 에서만
+            학습된다. `False` 면 델타도 위반으로 본다 — Phase A 와 LoRA 를 쓰지
+            않는 구성에서 어댑터가 실수로 붙는 것을 잡는다.
+    """
+    trainable = [
+        n for n, p in module.named_parameters()
+        if p.requires_grad and not (allow_lora and _is_lora(n))
+    ]
     if trainable:
+        extra = (
+            " LoRA 델타는 allow_lora=True 로만 허용된다 (ADR-014)."
+            if not allow_lora and any(_is_lora(n) for n in trainable) else ""
+        )
         raise FrozenBackboneViolation(
-            f"{what}에 학습 가능한 파라미터 {len(trainable)}개가 있다: "
+            f"{what}에 학습 가능한 base 파라미터 {len(trainable)}개가 있다: "
             f"{trainable[:5]}{' ...' if len(trainable) > 5 else ''}. "
-            f"제안서 §5는 백본 완전 동결(LoRA 불포함)을 명시한다."
+            f"백본 base 가중치 W₀는 전 학습 과정에서 동결이다 (I1).{extra}"
         )
 
 
@@ -74,6 +122,45 @@ def assert_weights_unchanged(before: str, after: str, what: str = "backbone") ->
     if before != after:
         raise FrozenBackboneViolation(
             f"{what} 가중치가 변했다 (before={before}, after={after})."
+        )
+
+
+# ------------------------------------------------------------------ I9
+
+
+def assert_encoding_is_base_only(
+    encoder: Any,
+    input_ids: torch.Tensor,
+    attention_mask: Optional[torch.Tensor] = None,
+) -> None:
+    """같은 입력의 `H` 가 어댑터 장착 여부와 무관하게 동일한지 확인한다 (I9).
+
+    ADR-014 의 실측: 어댑터를 **활성**인 채로 인코딩하면 `H` 가 base 와 달라진다.
+    즉 가드가 없으면 실제로 오염된다. 그리고 그 오염은 조용하다 — 그래서
+    경고가 아니라 불변식이다.
+
+    비교는 **비트 단위**다. 허용 오차를 두면 "조금 오염됐지만 통과" 가 생기고,
+    그 '조금' 이 얼마인지 아무도 모른다.
+    """
+    peft = getattr(encoder, "peft_model", None)
+    if peft is None:
+        return  # 어댑터가 없으면 I9 는 자명하게 성립한다
+
+    from lsrr.backbone.lora import adapters_disabled
+
+    with torch.no_grad():
+        guarded = encoder.encode(input_ids, attention_mask).H_last.clone()
+        # 가드를 **우회**해 직접 순전파한다 — 인코딩 경로가 실제로 어댑터를
+        # 끄고 있는지 확인하려면 끄지 않은 결과와 달라야 한다.
+        with adapters_disabled(peft):
+            reference = encoder.encode(input_ids, attention_mask).H_last.clone()
+
+    if not torch.equal(guarded, reference):
+        delta = float((guarded - reference).abs().max())
+        raise EncodingNotBaseOnly(
+            f"인코딩 경로가 어댑터를 끄지 않았다 — H 의 최대 차이 {delta:.3e}. "
+            f"LoRA 는 디코딩 전용이며 인코딩은 항상 base 가중치로 수행한다 "
+            f"(I9, ADR-014)."
         )
 
 
@@ -138,9 +225,19 @@ def assert_shared_readout(readout_calls: Iterable[Any]) -> None:
 # ------------------------------------------------------------------ I4
 
 
-def assert_no_grad(module: nn.Module, what: str = "backbone") -> None:
-    """역전파 후 그래디언트가 축적되지 않았는지 확인한다 (I4)."""
-    with_grad = [n for n, p in module.named_parameters() if p.grad is not None]
+def assert_no_grad(
+    module: nn.Module, what: str = "backbone", allow_lora: bool = False
+) -> None:
+    """역전파 후 그래디언트가 축적되지 않았는지 확인한다 (I4).
+
+    Args:
+        allow_lora: Phase B 에서는 LoRA 델타에 그래디언트가 흐르는 것이 정상이다
+            (ADR-014). base 파라미터는 여전히 무그래디언트여야 한다.
+    """
+    with_grad = [
+        n for n, p in module.named_parameters()
+        if p.grad is not None and not (allow_lora and _is_lora(n))
+    ]
     if with_grad:
         raise GradientPathViolation(
             f"{what}에 그래디언트가 축적되었다: {with_grad[:5]}. 역전파는 "
@@ -249,6 +346,7 @@ __all__ = (
     "weight_hash",
     "assert_frozen",
     "assert_weights_unchanged",
+    "assert_encoding_is_base_only",
     "EncodeCounter",
     "encode_guard",
     "assert_shared_readout",

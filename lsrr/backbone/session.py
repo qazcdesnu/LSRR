@@ -17,6 +17,14 @@ import torch
 from lsrr.backbone.continuation import BackboneContinuation
 from lsrr.backbone.extractor import extract, stack_hidden_states
 from lsrr.backbone.freeze import backbone_fingerprint, freeze_backbone
+from lsrr.backbone.lora import (
+    adapters_disabled,
+    attach_lora,
+    count_lora_parameters,
+    load_lora_state_dict,
+    lora_parameters,
+    lora_state_dict,
+)
 from lsrr.core.errors import AssemblyError, LSRRError
 from lsrr.core.interfaces import BaseContextEncoder
 from lsrr.core.registry import BACKBONE_REGISTRY
@@ -76,11 +84,48 @@ class HFFrozenCausalBackbone(BaseContextEncoder):
         self._hidden_dim = int(self.model.config.hidden_size)
         self._fingerprint = backbone_fingerprint(self.model)
 
+        #: LoRA 를 붙이기 전에는 None. Phase A 는 끝까지 None 이다.
+        self.peft_model: Optional[Any] = None
+
         self.answer_head = BackboneContinuation(
             self.model,
             pad_token_id=self.tokenizer.pad_token_id,
             eos_token_id=self.tokenizer.eos_token_id,
         )
+
+    # ------------------------------------------------------------ LoRA
+
+    def attach_lora(self, **kwargs: Any) -> int:
+        """디코딩 정렬용 LoRA 를 장착한다 (Phase B, ADR-014).
+
+        PEFT 는 대상 모듈을 **제자리에서** 교체하므로 `self.model` 인스턴스가
+        그대로 어댑터를 품는다 — 디코딩 경로(`answer_head`)는 바뀔 것이 없고,
+        인코딩 경로만 `adapters_disabled` 로 가드하면 된다 (I9).
+
+        Returns:
+            학습 가능해진 LoRA 파라미터 수.
+        """
+        if self.peft_model is not None:
+            raise LSRRError("LoRA 가 이미 장착돼 있다. 두 번 붙이면 어댑터가 중첩된다.")
+        self.peft_model = attach_lora(self.model, **kwargs)
+        return count_lora_parameters(self.model)
+
+    @property
+    def has_lora(self) -> bool:
+        return self.peft_model is not None
+
+    def lora_parameters(self) -> list:
+        return lora_parameters(self.model)
+
+    def lora_state_dict(self) -> dict:
+        return lora_state_dict(self.model)
+
+    def load_lora_state_dict(self, state: dict) -> None:
+        if self.peft_model is None:
+            raise LSRRError(
+                "LoRA 상태를 적재하려는데 어댑터가 없다. attach_lora 를 먼저 부르라."
+            )
+        load_lora_state_dict(self.model, state)
 
     # ------------------------------------------------------------ 속성
 
@@ -99,10 +144,15 @@ class HFFrozenCausalBackbone(BaseContextEncoder):
         return int(self.model.num_parameters())
 
     def verify_frozen(self) -> None:
-        """학습 후 호출해 가중치가 변하지 않았음을 확인한다 (I1)."""
+        """학습 후 호출해 **base** 가중치가 변하지 않았음을 확인한다 (I1).
+
+        LoRA 델타는 base 텐서를 갱신하지 않는 별도 파라미터이므로 예외다
+        (ADR-014 의 I1 재정의). 지문도 base 만 해싱한다 — 델타를 넣으면
+        지문이 LoRA 학습마다 바뀌어 I1 검증이 무의미해진다.
+        """
         from lsrr.core.invariants import assert_frozen, assert_weights_unchanged
 
-        assert_frozen(self.model, what=self.model_name)
+        assert_frozen(self.model, what=self.model_name, allow_lora=self.has_lora)
         assert_weights_unchanged(
             self._fingerprint, backbone_fingerprint(self.model), what=self.model_name
         )
@@ -138,7 +188,9 @@ class HFFrozenCausalBackbone(BaseContextEncoder):
 
         position_ids = (attention_mask.cumsum(-1) - 1).clamp(min=0)
 
-        with torch.no_grad():
+        # I9 — 인코딩은 언제나 순수 base 다. 어댑터가 없으면 무연산이므로
+        # 호출부가 LoRA 유무로 분기하지 않는다 (ADR-014).
+        with torch.no_grad(), adapters_disabled(self.peft_model):
             out = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -166,6 +218,7 @@ class HFFrozenCausalBackbone(BaseContextEncoder):
                 "include_embedding": self.include_embedding,
                 "position_rule": self.position_rule,
                 "kv_len": int(out.past_key_values.get_seq_length()),
+                "lora_attached": self.has_lora,
             },
         )
 

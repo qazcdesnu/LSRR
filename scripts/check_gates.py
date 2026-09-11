@@ -17,12 +17,17 @@
 | ① | `<run>/gate_inputs.json` → `collapse` | `effective_rank`, `mean_similarity`, `variance_ratio` |
 | ② | `<run>/gate_inputs.json` → `anytime` | `{사이클: 정확도}` |
 | ③ | 각 조건의 여러 런 → `metrics.json` → `accuracy` | 시드별 최종 정확도 |
+
+게이트 ③의 판정 대상은 v2에서 **방출 구조**다 (ADR-016): 처치군은 궤적 방출
+(`dynamic_m`), 대조군은 단일 벡터(v1, `single_v1`). 엔진 구조 비교는 Ablation C
+로 격하됐으므로 인자 이름도 방출 구조 중립적이다.
 | ④ | `<run>/gate_inputs.json` → `delta_trajectories` | 샘플별 Δ⁽ᵐ⁾ 궤적 |
 
 ## 사용
 
     python scripts/check_gates.py --runs-dir runs \
-        --hydra-glob 'phase0_*hydra_qs*' --mlp-glob 'phase0_*mlp_onepass*'
+        --treatment-glob '*condition_dynamic_m*' \
+        --control-glob '*condition_single_v1*'
 
     python scripts/check_gates.py --run runs/<run_id>          # ①②④만
     python scripts/check_gates.py ... --json out.json          # 기계 판독용
@@ -117,28 +122,32 @@ def collect_seed_accuracy(runs_dir: Path, pattern: str) -> list[float]:
     return values
 
 
+#: 게이트 ③의 이름. v1 은 "H+MLP 1회 통과 대비", v2 는 방출 구조다 (ADR-016).
+_KILL_NAME = "단일 벡터(v1) 대비 궤적 방출의 유의한 우위"
+
+
 def evaluate_kill_switch(
     runs_dir: Optional[Path],
-    hydra_glob: Optional[str],
-    mlp_glob: Optional[str],
+    treatment_glob: Optional[str],
+    control_glob: Optional[str],
     th: Phase0Thresholds,
 ) -> GateResult:
-    if runs_dir is None or not hydra_glob or not mlp_glob:
+    if runs_dir is None or not treatment_glob or not control_glob:
         return _unavailable(
-            "③", "H+MLP 1회 통과 대비 유의한 우위",
-            "--runs-dir 와 --hydra-glob/--mlp-glob 이 필요하다", kill=True,
+            "③", _KILL_NAME,
+            "--runs-dir 와 --treatment-glob/--control-glob 이 필요하다", kill=True,
         )
-    hydra = collect_seed_accuracy(runs_dir, hydra_glob)
-    mlp = collect_seed_accuracy(runs_dir, mlp_glob)
-    if len(hydra) < th.min_seeds or len(mlp) < th.min_seeds:
+    treatment = collect_seed_accuracy(runs_dir, treatment_glob)
+    control = collect_seed_accuracy(runs_dir, control_glob)
+    if len(treatment) < th.min_seeds or len(control) < th.min_seeds:
         return _unavailable(
-            "③", "H+MLP 1회 통과 대비 유의한 우위",
-            f"시드가 부족하다 (hydra {len(hydra)}개, mlp {len(mlp)}개, "
+            "③", _KILL_NAME,
+            f"시드가 부족하다 (처치 {len(treatment)}개, 대조 {len(control)}개, "
             f"조건당 {th.min_seeds}개 필요)",
             kill=True,
         )
     return gate_beats_baseline(
-        hydra, mlp, th.alpha, th.min_effect_size, th.min_difference
+        treatment, control, th.alpha, th.min_effect_size, th.min_difference
     )
 
 
@@ -146,9 +155,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", type=Path, help="게이트 ①②④ 판정에 쓸 런 디렉터리")
     ap.add_argument("--runs-dir", type=Path, default=Path("runs"), help="게이트 ③의 런 모음")
-    ap.add_argument("--hydra-glob", type=str, help="hydra_qs 런 glob (게이트 ③)")
-    ap.add_argument("--mlp-glob", type=str, help="mlp_onepass 런 glob (게이트 ③)")
-    ap.add_argument("--eps", type=float, default=1e-3, help="게이트 ④의 수렴 임계값")
+    ap.add_argument("--treatment-glob", type=str, help="처치군 런 glob — 궤적 방출 (게이트 ③)")
+    ap.add_argument("--control-glob", type=str, help="대조군 런 glob — 단일 벡터 v1 (게이트 ③)")
+    # ④의 ε 은 설정의 termination.eps 와 같은 값이어야 한다. Δ 정의가 v2.1 에서
+    # 바뀌었고(F-024) ADR-017 이 상태를 RMS 1 에 묶었으므로 v1 의 1e-3 은 무의미하다.
+    ap.add_argument("--eps", type=float, default=0.1, help="게이트 ④의 수렴 임계값")
     ap.add_argument("--json", type=Path, help="판정 결과를 기계 판독용 JSON 으로 저장")
     args = ap.parse_args(argv)
 
@@ -160,7 +171,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     results = [
         evaluate_collapse(inputs, th),
         evaluate_anytime(inputs, th),
-        evaluate_kill_switch(args.runs_dir, args.hydra_glob, args.mlp_glob, th),
+        evaluate_kill_switch(args.runs_dir, args.treatment_glob, args.control_glob, th),
         evaluate_delta(inputs, args.eps, th),
     ]
     report = build_report(PHASE_0, results)

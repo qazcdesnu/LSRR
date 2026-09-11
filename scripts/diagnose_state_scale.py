@@ -24,6 +24,7 @@ import json
 import math
 import sys
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -47,6 +48,14 @@ def _line(name: str, tensor: torch.Tensor) -> None:
     s = _scale(tensor)
     print(f"  {name:26s} shape={tuple(tensor.shape)}  "
           f"absmax={s['absmax']:.4g}  rms={s['rms']:.4g}")
+
+
+def _lora_cfg(cfg) -> Optional[dict]:
+    """설정의 `backbone.lora` 절. Phase B 체크포인트 적재에 필요하다 (ADR-014)."""
+    from omegaconf import OmegaConf
+
+    node = get_path(cfg, "backbone.lora", None)
+    return OmegaConf.to_container(node, resolve=True) if node is not None else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         candidate = args.run / "checkpoints" / "last.pt"
         ckpt = candidate if candidate.exists() else None
     if ckpt is not None:
-        load_checkpoint(model, ckpt)
+        load_checkpoint(model, ckpt, lora_cfg=_lora_cfg(cfg))
         print(f"체크포인트: {ckpt}")
     else:
         print("체크포인트 없음 — 초기화 직후 상태를 잰다")

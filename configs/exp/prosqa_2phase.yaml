@@ -1,0 +1,68 @@
+# ProsQA 정식 구성 — 2원화 학습 (v2.1 §5.0, ADR-014)
+#
+# 제안서가 제안한 **완성형**이다. Phase 0 게이트 런(Phase A 동결·콜드 스타트)과
+# 달리 LoRA 수신 정렬이 붙는다.
+#
+#   Phase A  동결 백본 · 엔진+메모리+방출기 학습   → 완전 동결 조건의 체크포인트
+#   Phase B  엔진 동결 · LoRA + 방출기 학습        → 순수 정렬 이득
+#
+# **이 분해가 Ablation B 를 학습 과정 자체에서 산출한다** — 두 체크포인트
+# (`phase_A.pt`, `phase_B.pt`)를 각각 평가하면 별도 실험이 필요 없다.
+#
+# LoRA 는 **디코딩 전용**이다. 인코딩 패스는 전 과정에서 순수 base 가중치로
+# 수행되며(I9), 계약 테스트가 `H` 의 비트 단위 동일성을 확인한다. 이 한정
+# 덕분에 `H`·질문 KV 재사용 경제가 Phase B 에서도 살아 있다.
+defaults: [base, backbone/gpt2, data/prosqa]
+
+backbone:
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.0
+    # GPT-2 는 Conv1D 다 — PEFT 가 감지해 fan_in_fan_out 을 자동 보정한다.
+    # 경고가 떠도 정상이다 (ADR-014).
+    target_modules: [c_attn, c_proj]
+
+memory:
+  adapter:
+    d_model: 256          # L×d_in×d_model = 12×768×256 ≈ 2.4M (백본의 1.9%)
+
+engine:
+  type: hydra_qs
+  d_state: 16
+  n_blocks: 2
+
+recurrence:
+  schedule: {type: lognormal, mean: 5, max: 8}
+  tbptt_k: 4
+
+termination:
+  type: delta_state
+  m_min: 1
+  m_max: 8
+
+readout:
+  path:
+    emission: trajectory
+    max_new_tokens: 12
+  fusion:
+    anchor: first
+
+train:
+  bs: 8                   # 질문 최대 626 토큰
+  log_every: 200
+  phases:
+    # Phase A — 게이트 런과 같은 조건이되 10 epoch.
+    - name: A
+      epochs: 10
+      lr: 1.0e-3
+      trainable: [engine, memory, emitter]
+    # Phase B — 엔진을 얼리고 수신기만 맞춘다. 정렬이므로 lr 을 한 자리 낮춘다;
+    # A 의 lr 을 그대로 쓰면 방출기가 흔들려 "순수 정렬 이득" 이 아니게 된다.
+    - name: B
+      epochs: 5
+      lr: 1.0e-4
+      trainable: [emitter, lora]
+
+eval:
+  max_new_tokens: 12

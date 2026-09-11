@@ -29,6 +29,16 @@ class FrozenBackboneViolation(InvariantViolation):
     invariant = "I1"
 
 
+class EncodingNotBaseOnly(InvariantViolation):
+    """I9: 인코딩 패스가 순수 base 가중치로 수행되지 않았다.
+
+    LoRA 는 디코딩 전용이다 (ADR-014). 인코딩에 어댑터가 새면 `H` 가 조용히
+    오염되고 — 학습은 정상적으로 돌므로 — 결과만 설명 불가가 된다.
+    """
+
+    invariant = "I9"
+
+
 class MultipleEncodeError(InvariantViolation):
     """I2: 샘플 배치당 백본 인코딩이 1회를 초과했다.
 
