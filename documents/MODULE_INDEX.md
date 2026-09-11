@@ -88,7 +88,8 @@
 
 | 모듈 | 역할 | 상태 |
 |---|---|---|
-| `wrapper.py` | §4.2 갱신식 소유: 감쇠·R⁰ 재주입·사이클 임베딩·pre-norm — **Ablation D** | 검증 |
+| `wrapper.py` | §4.2 갱신식 소유: 감쇠·R⁰ 재주입·사이클 임베딩·pre-norm·**상태 정규화**(ADR-017) — **Ablation D** | 검증 |
+| `stack.py` | pre-norm 잔차 블록 스택. 이어 붙이면 증폭이 곱해진다 (F-029) | 검증 |
 | `scan.py` | 선택적 스캔 프리미티브 + quasiseparable shift (SSM 코어 공용) | 검증 |
 | `core_hydra.py` | quasiseparable 양방향 스캔 (기본) | 검증 |
 | `core_mamba.py` | 단방향 상향/하향, 휴리스틱 양방향 — **Ablation C** | 검증 |

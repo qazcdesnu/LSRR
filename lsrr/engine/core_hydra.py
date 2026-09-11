@@ -36,6 +36,7 @@ import torch.nn.functional as F
 
 from lsrr.core.registry import ENGINE_REGISTRY
 from lsrr.engine.scan import selective_scan_sequential, shift_layers
+from lsrr.engine.stack import PreNormResidualStack
 from lsrr.engine.wrapper import EngineWrapper
 
 
@@ -159,7 +160,8 @@ def build_hydra_qs(
         )
         for _ in range(n_blocks)
     ]
-    core: nn.Module = nn.Sequential(*cores) if n_blocks > 1 else cores[0]
+    # 잔차·정규화 없이 이어 붙이면 블록의 증폭이 곱해진다 (F-029).
+    core: nn.Module = PreNormResidualStack(cores)
     return EngineWrapper(
         core=core,
         d_model=d_model,

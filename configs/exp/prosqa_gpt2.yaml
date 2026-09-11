@@ -20,7 +20,8 @@ recurrence:
 
 termination:
   type: delta_state
-  eps: 0.05
+  # ε 은 base.yaml 을 따른다 (0.1). 실측 Δ 는 0.68~1.26 이고 샘플 간 표준편차가
+  # 0.001 이라 어떤 ε 도 샘플별 M 을 만들지 못한다 (F-030). 폴백을 감추지 않는다.
   m_min: 1
   m_max: 8
 
