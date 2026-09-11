@@ -28,10 +28,11 @@
 | `lsrr/backbones/extractor.py` | `lsrr/backbone/{session,extractor}.py` | **개작** | 동결·해시 로직은 이식. `position_rule` 택일 구조를 `H_last`+`H_pool` 동시 산출로 확장 (ADR-004). KV 캐시 반환 추가 (ADR-002) |
 | `lsrr/adapters/layer_adapter.py` | `lsrr/memory/adapters.py` | **이식** | per-layer affine einsum·RMSNorm·layer pos emb 모두 제안서 §4.1에 정확히 대응. 레이어 위치 임베딩만 `layer_embedding.py`로 분리 |
 | `lsrr/engines/wrapper.py` | `lsrr/engine/wrapper.py` | **이식** | 감쇠·사이클 임베딩·R⁰ 재주입·pre-norm — §4.2 "재귀 적응 장치" 3종을 정확히 구현. 갱신식 소유권을 문서로 못 박아 재사용 |
-| `lsrr/engines/hydra_qs.py` | `lsrr/engine/core_hydra.py` | **이식** | quasiseparable 구현. `test_hydra_quasiseparable.py`도 함께 이식 |
+| `lsrr/engines/hydra_qs.py` | `lsrr/engine/core_hydra.py` | **이식** | quasiseparable 구현. 이식 시 shift 누락 회귀를 확인·고정 (F-013) |
 | `lsrr/engines/mamba_up_down.py` | `lsrr/engine/core_mamba.py` | **이식** | Ablation C의 방향 3종(상향/하향/휴리스틱 양방향) |
-| `lsrr/engines/attn_block.py` | `lsrr/engine/core_attention.py` | **이식** | 동FLOPs 어텐션 베이스라인 |
+| `lsrr/engines/attn_block.py` | `lsrr/engine/core_attention.py` | **이식** | 동예산 어텐션 베이스라인. 하드코딩된 `d_ffn=4710`을 d_model 역산으로 개작 (F-015) |
 | `lsrr/engines/mlp_onepass.py` | `lsrr/engine/core_mlp.py` | **이식** | Phase 0 게이트 ③의 비교 대상 |
+| `lsrr/engines/ssm_core.py` | `lsrr/engine/scan.py` | **이식** | 선택적 스캔 + shift. 코어 간 의존을 막기 위해 공용 모듈로 분리 |
 | `lsrr/iteration/controller.py` | `lsrr/recurrence/{runner,schedules,tbptt,state}.py` | **개작** | 3분할 (ADR-005). 조기 종료 래칭 로직(`controller.py:129-141`)은 의미 그대로 `state.py`로 |
 | `lsrr/termination/rules.py` | `lsrr/termination/{rules,signals}.py` | **개작** | 규칙은 이식, 신호 계산을 `signals.py`로 공통화. 엔트로피 규칙 신설, `M_max` 폴백을 공통 기반 클래스로 승격 (I5) |
 | `lsrr/fusion/attention_pooling.py` | `lsrr/readout/fusion.py` | **개작** | α 풀링·잔차/게이트/concat 이식. 앵커를 `h_ctx`(백본 원본)로 교체하고 `W_r` 출력 폭을 `d_in`으로 (ADR-003) |
@@ -67,9 +68,11 @@
 | `test_termination.py` | `tests/contracts/test_termination_fallback.py` | 이식 | I5 |
 | `test_eval_protocol.py` | `tests/contracts/test_cost_accounting.py` + `tests/unit/` | 개작 | I7 |
 | `test_fusion_residual.py` | `tests/contracts/test_injection_space.py` | 개작 | I8 (앵커 교체 반영, ADR-003) |
-| `test_engine_equiv.py` | `tests/unit/test_engine_equiv.py` | 이식 | — (HydraQS 순방향 분기 ≡ Mamba-Up) |
-| `test_hydra_quasiseparable.py` | `tests/unit/test_hydra_quasiseparable.py` | 이식 | — |
-| `test_param_matching.py` | `tests/unit/test_budget_match.py` | 이식 | — (Ablation C 공정성, ADR-009) |
+| `test_engine_equiv.py` | `tests/unit/test_hydra_port_fidelity.py` | 이식 | — (HydraQS 단방향 ≡ Mamba-Up) |
+| `test_hydra_quasiseparable.py` | `tests/unit/test_hydra_port_fidelity.py` | 이식 | — |
+| `test_param_matching.py` | `tests/unit/test_hydra_port_fidelity.py` | 이식 | — (Ablation C 공정성, ADR-009) |
+
+> 위 3종은 **한 파일로 통합**했다. 셋 다 "Hydra 이식이 충실한가"라는 하나의 판정에 기여하고, `ROADMAP.md`가 레거시 폐기 게이트를 `test_hydra_port_fidelity.py` 통과로 명시하므로 그 이름을 정본으로 삼았다.
 | `test_cache.py` | `tests/regression/test_cache_roundtrip.py` | 이식 | — |
 | `test_reproducibility.py` | `tests/regression/test_reproducibility.py` | 이식 | — |
 | `test_logging_and_resume.py` | `tests/integration/test_logging_and_resume.py` | 이식 | — |
@@ -100,7 +103,7 @@
 
 | 시점 | 조치 | 선행 조건 |
 |---|---|---|
-| **M4 완료 후** | `runs/`·`caches/` 삭제 (8.3 GB) | `tests/unit/test_hydra_port_fidelity.py` 통과 |
+| **M4 완료 후** | `runs/`·`caches/` 삭제 (**29 GB**, 2026-09-11 재측정) | `tests/unit/test_hydra_port_fidelity.py` 통과 ✅ |
 | **M7 완료 후** | `Legacy_LSRR/` 전체 삭제 (1.6 MB) | 아래 §1·§2의 이식/개작 항목이 `MODULE_INDEX.md`에서 전부 `검증` 상태 |
 
 상세는 [`ROADMAP.md`의 «Legacy_LSRR 폐기 계획»](ROADMAP.md#legacy_lsrr-폐기-계획).
@@ -109,5 +112,5 @@
 
 | 시점 | 상태 | 실행일 |
 |---|---|---|
-| `runs/`·`caches/` 삭제 | 미실행 | — |
+| `runs/`·`caches/` 삭제 | **완료** (29 GB 회수) | 2026-09-11 |
 | `Legacy_LSRR/` 전체 삭제 | 미실행 | — |

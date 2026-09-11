@@ -13,11 +13,12 @@
 
 | 모듈 | 역할 | 상태 |
 |---|---|---|
-| `accuracy.py` | 최종답 exact match 프로토콜 (greedy, 샘플별 EOS 절단, 최종답만) | 계획 |
-| `anytime.py` | 사이클별 정확도 곡선 (§5의 부산물, 게이트 ② 판정 데이터) | 계획 |
-| `cost.py` | FLOPs·지연 회계 (I7) | 계획 |
+| `accuracy.py` | 최종답 exact match 프로토콜 (greedy, 샘플별 EOS 절단, 최종답만) | 검증 |
+| `anytime.py` | 사이클별 정확도 곡선 (§5의 부산물, 게이트 ② 판정 데이터) | 검증 |
+| `cost.py` | FLOPs·지연 회계 (I7) | 검증 |
 | `pareto.py` | 정확도 ↔ 연산/지연 프론티어 | 계획 |
-| `aggregate.py` | 시드 집계·신뢰구간 (게이트 ③의 유의성 검정 입력) | 계획 |
+| `aggregate.py` | 시드 집계·신뢰구간 (게이트 ③의 유의성 검정 입력) | 검증 |
+| `evaluate.py` | 평가 실행 — 네 게이트의 판정 데이터를 한 번에 수집 | 검증 |
 
 ## 핵심 계약
 
@@ -56,5 +57,11 @@ CostReport {
 `Legacy_LSRR/lsrr/utils/flops.py`, `Legacy_LSRR/lsrr/training/evaluator.py` — **개작**. 해석적 FLOPs 추정 구조와 `flops_includes_backbone` 플래그 규약, `MissingTargetError` 정책은 계승. 디코더 항을 연속 디코딩 항으로 교체.
 `Legacy_LSRR/tests/test_eval_protocol.py`(361줄) — 평가 프로토콜의 함정이 축적된 테스트다. 개작해 이식.
 
+> `evaluate.py`는 원래 계획에 없던 모듈이다. 게이트는 판정만 하고 실험을 돌리지
+> 않으므로(`gates/README.md`), **판정 데이터를 만드는 쪽**이 어딘가에는 있어야 한다.
+> `gates/`에 두면 그 경계가 무너지고, `scripts/eval.py`에만 두면 테스트가 어렵다.
+
 ## 상태
-계획 — M5 (`pareto.py`는 M6)
+**검증(부분)** — `accuracy`·`anytime`·`cost`·`aggregate` 완료 (M5). `pareto.py`는 M6.
+
+`cost.py`는 아직 해석적 추정만 한다 — 실측 지연은 M6 의 `scripts/profile_cost.py` 가 채운다.

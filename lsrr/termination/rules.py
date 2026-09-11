@@ -24,8 +24,8 @@ from lsrr.termination.base import TerminationRuleBase
 class FixedMRule(TerminationRuleBase):
     """정확히 M회 돌고 멈춘다. Ablation B의 대조 조건이자 M 스윕의 도구."""
 
-    def __init__(self, m: int = 6, m_max: int = 32, **_: Any) -> None:
-        super().__init__(m_max=m_max)
+    def __init__(self, m: int = 6, m_max: int = 32, m_min: int = 1, **_: Any) -> None:
+        super().__init__(m_max=m_max, m_min=m_min)
         if int(m) > self.m_max:
             raise ConfigError(
                 f"fixed_m의 m({m})이 m_max({m_max})를 넘는다 — 폴백이 먼저 걸려 "
@@ -52,9 +52,14 @@ class DeltaStateRule(TerminationRuleBase):
     """
 
     def __init__(
-        self, eps: float = 1e-3, m_max: int = 32, relative: bool = False, **_: Any
+        self,
+        eps: float = 1e-3,
+        m_max: int = 32,
+        m_min: int = 1,
+        relative: bool = False,
+        **_: Any,
     ) -> None:
-        super().__init__(m_max=m_max)
+        super().__init__(m_max=m_max, m_min=m_min)
         self.eps = float(eps)
         self.relative = relative
 
@@ -73,8 +78,10 @@ class KLOutputRule(TerminationRuleBase):
     필요하다 — `config/validate.py`가 이 조합을 로드 시점에 확인한다.
     """
 
-    def __init__(self, eps: float = 1e-3, m_max: int = 32, **_: Any) -> None:
-        super().__init__(m_max=m_max)
+    def __init__(
+        self, eps: float = 1e-3, m_max: int = 32, m_min: int = 1, **_: Any
+    ) -> None:
+        super().__init__(m_max=m_max, m_min=m_min)
         self.eps = float(eps)
 
     def needs_logits(self) -> bool:
@@ -96,8 +103,10 @@ class EntropyOutputRule(TerminationRuleBase):
     어떻게 갈리는지가 Ablation B의 관심사다.
     """
 
-    def __init__(self, eps: float = 1.0, m_max: int = 32, **_: Any) -> None:
-        super().__init__(m_max=m_max)
+    def __init__(
+        self, eps: float = 1.0, m_max: int = 32, m_min: int = 1, **_: Any
+    ) -> None:
+        super().__init__(m_max=m_max, m_min=m_min)
         self.eps = float(eps)
 
     def needs_logits(self) -> bool:

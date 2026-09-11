@@ -26,7 +26,12 @@ from torch.utils.data import DataLoader
 
 from lsrr.core.invariants import assert_no_grad
 from lsrr.core.types import ReasoningTrace
-from lsrr.recurrence.hooks import DiagnosticsRecorder, ReadoutHook
+from lsrr.recurrence.hooks import (
+    DiagnosticsRecorder,
+    ReadoutHook,
+    sample_supervision_cycles,
+)
+from lsrr.recurrence.tbptt import make_window
 from lsrr.runtime.checkpoint import save_checkpoint
 from lsrr.telemetry.traces import summarize_trace
 
@@ -108,6 +113,9 @@ class Trainer:
         self.deep_supervision = bool(
             _get(cfg, "objective.deep_supervision.enabled", False)
         )
+        self.ds_num_cycles = int(
+            _get(cfg, "objective.deep_supervision.num_cycles", 2)
+        )
 
     # ------------------------------------------------------------ 스텝
 
@@ -122,15 +130,29 @@ class Trainer:
         recorder = DiagnosticsRecorder()
         hooks: list[Any] = [recorder]
         readout_hook: Optional[ReadoutHook] = None
+
+        # 깊은 감독만 켜져 있으면 감독 대상 사이클만 판독한다 (ADR-006).
+        # 그러려면 TBPTT 윈도를 미리 알아야 하므로 M을 여기서 뽑아 넘긴다.
+        # anytime 곡선(readout_per_cycle)이 켜져 있으면 전 사이클을 읽는다.
+        M: Optional[int] = None
+        cycles: Optional[list[int]] = None
+        if self.deep_supervision and not self.readout_per_cycle:
+            M = model.runner.schedule.sample_M()
+            cycles = sample_supervision_cycles(
+                make_window(M, model.runner.tbptt_k),
+                num_cycles=self.ds_num_cycles,
+            )
+
         if self.readout_per_cycle or self.deep_supervision:
             readout_hook = ReadoutHook(
                 readout=model.readout,
                 context=context,
                 answer_ids=batch.get("target_ids"),
+                cycles=cycles,
             )
             hooks.append(readout_hook)
 
-        trace = model.refine(R0, hooks=hooks, is_eval=False)
+        trace = model.refine(R0, hooks=hooks, is_eval=False, M=M)
         trace.R0 = R0
         trace.h_ctx = context.h_ctx
 
@@ -201,6 +223,16 @@ class Trainer:
             save_checkpoint(
                 self.model,
                 self.tracker.checkpoint_dir / f"epoch_{epoch}.pt",
+                optimizer=self.optimizer,
+                step=self.global_step,
+                meta={"epoch": epoch},
+            )
+            # 안정된 이름으로도 남긴다. 평가·스윕이 epoch 번호를 몰라도 되게 하려면
+            # 경로가 예측 가능해야 한다 — glob 으로 최신을 고르는 방식은 에폭 수가
+            # 바뀌면 조용히 다른 체크포인트를 집는다.
+            save_checkpoint(
+                self.model,
+                self.tracker.checkpoint_dir / "last.pt",
                 optimizer=self.optimizer,
                 step=self.global_step,
                 meta={"epoch": epoch},

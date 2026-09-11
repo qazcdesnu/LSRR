@@ -3,7 +3,7 @@
 > 이 문서는 **무엇을 어떤 순서로 만들 것인가**를 다룬다. 무엇을 주장하는가는 `Research_Proposal.md`, 어떻게 조립되는가는 `ARCHITECTURE.md`.
 > 원칙: **게이트 이전에는 최소한만 만든다.** Phase 0 게이트 ③이 킬 스위치이므로, 그 판정에 필요 없는 것은 만들지 않는다.
 
-**최종 갱신:** 2026-09-10 · 현재 위치: **M3 완료 · M4 미착수**
+**최종 갱신:** 2026-09-11 · 현재 위치: **M5 완료 · Phase 0 게이트 판정 대기**
 
 ---
 
@@ -35,14 +35,22 @@ per-layer 어댑터 + `mlp_onepass` 엔진 + 고정 M + `answer_nll`만.
 *새 도구:* `scripts/diagnose_injection.py` — teacher-forcing 손실 하강은 주입 학습의 증거가 못 되므로(F-010) 개입 비교로 판정한다. Phase 0 게이트 판정 전 필수.
 *주의:* 이 단계의 `mlp_onepass`가 곧 Phase 0 게이트 ③의 **비교 대상**이다. 베이스라인을 먼저 만드는 것이 순서상 옳다 (ADR-009).
 
-### M4 — 정제 엔진과 사이클 축 (`engine/core_hydra`, `recurrence` 전체, `termination`)
+### M4 — 정제 엔진과 사이클 축 (`engine/core_hydra`, `recurrence` 전체, `termination`) ✅
 quasiseparable 양방향 스캔, 감쇠·재주입·사이클 임베딩, M 샘플링, TBPTT, Δ<ε 종료.
-*완료 조건:* 계약 테스트 I3·I4·I5 통과. Δ⁽ᵐ⁾ 궤적이 기록된다.
-*레거시 조치:* 엔진 이식 충실도 검증이 끝나면 레거시 `runs/`·`caches/`(8.3GB)의 참조 가치가 소멸한다 — 삭제한다.
+*완료:* Ablation C 스윕의 6개 엔진이 모두 등록·조립된다. 계약 테스트 I3·I4·I5 통과. 6종 전부에서 Δ⁽ᵐ⁾ 궤적이 기록된다(`hydra_qs` 무작위 초기화 기준 2.85 → 0.0086 단조 감소 후 미세 반등). 테스트 221종 통과.
+*이식 충실도 (F-013·F-014):* 레거시에서 quasiseparable shift가 빠져 있어 `hydra_qs`와 `bidir_add`의 출력 차이가 **정확히 0**이었다 — Ablation C의 핵심 비교가 같은 것끼리였다. shift 적용 후 상대 차이 17~28%. 단방향 축퇴(`disable_backward=True` ≡ `mamba_up`)가 0.0000e+00로 이식 정확성을 건다.
+*새 모듈:* `engine/scan.py` — 계획에 없던 분리. 코어끼리 import하면 Ablation C의 비교 대상들이 서로 의존하게 된다.
+*미해소 위험:* `budget.py`는 파라미터만 정합한다. FLOPs 축은 L=12에서 묻히지만 스케일 확장(M8)에서 재검토가 필요하다 (F-015).
+*레거시 조치:* 이식 충실도 검증이 끝나 레거시 `runs/`·`caches/`의 참조 가치가 소멸했다 — **2026-09-11 삭제 완료** (29GB 회수, 로드맵 추정 8.3GB보다 컸다). 폴더 README는 보존.
 
-### M5 — 감독과 진단 (`objectives/deep_supervision`, `metrics`, `gates`)
+### M5 — 감독과 진단 (`objectives/deep_supervision`, `metrics`, `gates`) ✅
 답-앵커형 깊은 감독, anytime 곡선, 비용 회계, Phase 0 게이트 판정기.
-*완료 조건:* `scripts/check_gates.py`가 ①~④에 대해 PASS/FAIL을 낸다.
+*완료:* `scripts/check_gates.py`가 ①~④에 대해 PASS / FAIL / **판정불가**를 내고 종료 코드로 신호한다 (0 PASS · 1 FAIL · 2 킬 스위치 · 3 데이터 부족). 통과·킬스위치·미완 세 시나리오를 합성 데이터로 검증했다. 테스트 290종 통과.
+*새 모듈:* `objectives/deep_supervision`, `metrics/{accuracy,anytime,cost,aggregate}`, `gates/{criteria,definitions,report}`, `analysis/collapse`(게이트 ①), `termination/behavior`(게이트 ④).
+*배선:* `recurrence.hooks.sample_supervision_cycles`가 호출처 없이 놀고 있었다 — 트레이너가 M을 먼저 뽑아 TBPTT 윈도를 계산한 뒤 감독 대상 사이클만 판독하도록 연결했다 (ADR-006). `model.refine(M=...)` 통과 경로 추가.
+*설계를 바꾼 측정 (F-016~F-018):* 효과크기만으로는 킬 스위치가 0.3%p 차이에 통과한다 → 절대 차이 하한 1%p 추가. 거동 라벨에 ε을 넣으면 ε 스윕과 층화 분석이 동시에 성립하지 않는다 → 모양과 안착 분리. 유효 랭크는 중심화하면 붕괴를 놓친다 → 중심화 제거.
+*판정 불가는 통과가 아니다:* 데이터가 없으면 FAIL이 아니라 '미완'으로 구분하고, **킬 스위치는 측정된 실패에서만 발동한다**.
+*판정 데이터 경로:* `metrics/evaluate.py` + `scripts/eval.py`가 한 번의 평가에서 `metrics.json`(③)과 `gate_inputs.json`(①②④)을 낸다. anytime은 최종 정확도와 같은 생성 기반 프로토콜로 잰다 — 다른 양으로 재면 ②와 ③이 서로 다른 것을 말한다. 미학습 모델과 스모크 규모 6런(2조건×3시드)으로 전 경로를 확인했다 (F-020·F-021). `scripts/sweep.py`가 조합을 만들고 train→eval을 연쇄하며, 판정은 여전히 `check_gates.py`의 일이다.
 
 ### ▶ **Phase 0 게이트 판정** (GPT-2 + 곱셈 · ProsQA)
 | 게이트 | 판정 근거 |
@@ -99,15 +107,15 @@ M0 ─▶ M1 ─▶ M2 ─▶ M3 ─▶ M4 ─▶ M5 ─▶ [Phase 0 게이트]
 
 | 구성 | 크기 | 참조 가치 |
 |---|---:|---|
-| `runs/` (체크포인트·로그) | **7.7 GB** | 낮음 — 디코딩 경로가 달라 신규 결과와 비교 불가 (ADR-001). 단 M4까지 **엔진 이식 충실도 대조**에 쓸 수 있다 |
-| `caches/` (H 캐시) | **644 MB** | 없음 — 캐시 키 규약이 바뀌었고(`H_pool` 추가) 어차피 재생성 대상 |
+| `runs/` (체크포인트·로그) | **15 GB** (2026-09-11 재측정) | 소멸 — M4 이식 충실도 검증 완료 |
+| `caches/` (H 캐시) | **14 GB** (2026-09-11 재측정) | 없음 — 캐시 키 규약이 바뀌었고(`H_pool` 추가) 어차피 재생성 대상 |
 | 소스·설정·테스트·문서 | **약 1.6 MB** | 높음 — 이식·개작의 원본 |
 
 ### 폐기 시점
 
 | 시점 | 조치 | 회수 용량 |
 |---|---|---|
-| **M4 완료 후** | `runs/`·`caches/` 삭제 | 8.3 GB |
+| **M4 완료 후** | `runs/`·`caches/` 삭제 | **29 GB** |
 | **M7 완료 후** | `Legacy_LSRR/` 전체 삭제 | 1.6 MB |
 
 - **M4 시점:** 엔진 이식 충실도 테스트(`tests/unit/test_hydra_port_fidelity.py`)가 통과하면 레거시 체크포인트의 대조 가치가 소멸한다. 그 전에는 `runs/`를 남겨 둔다.

@@ -17,7 +17,7 @@ $$L = L_{NLL} + \lambda_{ds}L_{DeepSup} + \lambda_{reg}L_{VarReg}\ (+\ \lambda_{
 |---|---|---|
 | `targets.py` | 정답 구간 마스킹, `IGNORE_INDEX` 규약 (I6) | 계획 |
 | `answer_nll.py` | `L_NLL` — `h_fusion` 조건 하 답 토큰 NLL | 계획 |
-| `deep_supervision.py` | `L_DeepSup` — 답-앵커형, γ 가중 (ADR-006) | 계획 |
+| `deep_supervision.py` | `L_DeepSup` — 답-앵커형, γ 가중 (ADR-006) | 검증 |
 | `variance_reg.py` | `L_VarReg` — 상태 분산 하한 (자명해·상수 붕괴 방지, 소계수) | 계획 |
 | `distillation.py` | `L_KD` — **ablation 전용** | 계획 |
 | `composite.py` | 가중 합성, 항별 지표를 개별로도 보고 | 계획 |
@@ -57,4 +57,5 @@ $$L_{DeepSup} = \sum_{m\in S} w_m \cdot \mathrm{NLL}(\text{answer} \mid h_{fusio
 `Legacy_LSRR/lsrr/losses/composite.py` — **개작(파일 분할)**. `AnswerNLLLoss`와 `StateVarianceRegLoss`는 이식. `DeepSupervisionLoss`는 (i) 윈도 경계 인식 (ii) γ 가중 (iii) 모듈 객체 대신 사전 계산된 사이클별 로짓 수신으로 개작한다. `_loss_targets`의 `labels`/`target_ids` 구분은 `targets.py`로 승격.
 
 ## 상태
-**검증(부분)** — `targets`·`answer_nll`·`composite` 완료 (M3). `deep_supervision`·`variance_reg`는 M5.
+**검증(부분)** — `targets`·`answer_nll`·`composite`(M3), `deep_supervision`(M5) 완료.
+`variance_reg`·`distillation`은 안정화 사다리(ADR-007)와 ablation 시점에 만든다.

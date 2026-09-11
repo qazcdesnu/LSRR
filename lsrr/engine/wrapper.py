@@ -33,6 +33,7 @@ class EngineWrapper(BaseRefinementEngine):
         d_model: 사고 메모리 폭.
         damping_alpha: 감쇠 계수 α. 1.0이면 감쇠 없음 — Ablation D의 스윕 축이며,
             수렴 강제와 진동형 표현력 사이의 트레이드오프를 정량화한다.
+            기본값 0.8은 v2.1 §4.2 (v1은 0.5였다).
         max_cycles: 사이클 임베딩 테이블 크기. `termination.m_max` 이상이어야 한다.
         cycle_embedding: 사이클 인덱스 조건화 여부.
         reinject_r0: R⁰ 재주입 방식.
@@ -43,7 +44,7 @@ class EngineWrapper(BaseRefinementEngine):
         self,
         core: nn.Module,
         d_model: int = 768,
-        damping_alpha: float = 0.5,
+        damping_alpha: float = 0.8,
         max_cycles: int = 32,
         cycle_embedding: bool = True,
         reinject_r0: ReinjectMode = "gate",

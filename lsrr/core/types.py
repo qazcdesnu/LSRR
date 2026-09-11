@@ -93,9 +93,11 @@ class ReadoutResult:
     """
 
     logits: Optional[torch.Tensor] = None  # [B, T_a, V]
-    h_fusion: Optional[torch.Tensor] = None  # [B, d_in]
+    h_fusion: Optional[torch.Tensor] = None  # [B, d_in] — 궤적의 마지막 토큰
     alpha: Optional[torch.Tensor] = None  # [B, L]
     m: Optional[int] = None
+    #: [B, M, d_in] 이 판독에 주입된 궤적 전체 (v2.1 §4.4, ADR-015).
+    h_thought: Optional[torch.Tensor] = None
 
 
 @dataclass
@@ -113,6 +115,9 @@ class ReasoningTrace:
     R_star: Optional[torch.Tensor] = None
     h_ctx: Optional[torch.Tensor] = None
     h_fusion: Optional[torch.Tensor] = None
+    #: [B, M, d_in] 동적 궤적 방출 (v2.1 §4.4, ADR-015).
+    #: v1 단일 벡터는 M=1 인 특수 경우이며 `h_fusion` 이 그 별칭이다.
+    h_thought: Optional[torch.Tensor] = None
     alpha: Optional[torch.Tensor] = None
     stopping_cycles: Optional[torch.Tensor] = None  # [B] long
     per_cycle: list[CycleDiagnostics] = field(default_factory=list)

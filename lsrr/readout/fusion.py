@@ -22,6 +22,28 @@ from lsrr.core.registry import FUSION_REGISTRY
 
 FusionType = Literal["residual", "gate", "concat"]
 
+#: 잔차 앵커 `h_ctx` 를 방출 토큰에 섞는 방식 (ADR-015 / F-025).
+#:
+#: v1 의 `h = h_ctx + W_r·h_ssm` 에서 앵커는 세 가지 일을 했다.
+#:   ① 정보 보험 — 잠재 벡터가 백본에 가는 **유일한** 통로였으므로, 정제가
+#:      실패해도 질문 요약이 실려 있으면 최소 성능이 보장됐다.
+#:   ② 매니폴드 착지 — 백본 자신이 만든 벡터를 기저로 깔아 분포 근처에 둔다.
+#:   ③ 안정화 램프 — W_r 을 작게 시작하면 초기 주입 ≈ h_ctx 라 백본을 놀라게
+#:      하지 않고 사고 항이 점진적으로 켜진다 (ResNet 잔차 가지의 논리).
+#:
+#: **v2 에서 ①과 ②가 소멸한다.** 백본이 질문 전체의 base KV 위에서 디코딩하므로
+#: `h_ctx` 가 요약하는 내용은 어텐션이 원본에서 언제든 꺼낼 수 있다 — 잠재 토큰에
+#: 또 실으면 순수 중복이다(①). 그리고 Phase B 의 LoRA 수신 정렬이 있으므로 주입
+#: 벡터를 `h_ctx` 근처로 위장할 필요가 없다(②). 애초에 노름 232 짜리 `h⁽ᴸ⁾` 은
+#: 임베딩 분포(노름 수 단위)와 동떨어져 있어 ② 의 명분이 실측과 맞지 않았다.
+#:
+#: 남는 ③ 은 상수 앵커 없이도 된다 — 토큰별 RMS 보정(ADR-013)과 W_r 초기화가
+#: 이미 제공하고, 부족하면 `ramp` 가 학습 게이트로 대체한다.
+#:
+#: 그리고 앵커는 **모든 사이클에 같은 벡터를 더하는 공통 스탬프**이므로 방출
+#: 토큰의 분화를 원천에서 막는다 (F-025: `h⁽¹⁾` vs `h⁽⁵⁾` 코사인 1.0000).
+AnchorMode = Literal["ctx", "none", "ramp", "first"]
+
 
 @FUSION_REGISTRY.register("attention_pooling")
 class AttentionPoolingFusion(BaseFusionHead):
@@ -43,15 +65,24 @@ class AttentionPoolingFusion(BaseFusionHead):
         d_out: int = 768,
         fusion_type: FusionType = "residual",
         w_r_init_scale: float = 0.01,
+        anchor: AnchorMode = "none",
+        ramp_init: float = -2.0,
         **_: Any,
     ) -> None:
         super().__init__()
         self.d_model = d_model
         self.d_out = d_out
         self.fusion_type = fusion_type
+        self.anchor = anchor
 
         if fusion_type not in ("residual", "gate", "concat"):
             raise AssemblyError(f"fusion_type '{fusion_type}'를 모른다.")
+        if anchor not in ("ctx", "none", "ramp", "first"):
+            raise AssemblyError(f"anchor '{anchor}'를 모른다.")
+        if anchor == "ramp":
+            # σ(g)·W_r·h_ssm — 앵커 없이 안정화 램프만 남긴다. g 초기값이 작아
+            # 학습 초기 주입이 작게 시작한다.
+            self.ramp = nn.Parameter(torch.tensor(float(ramp_init)))
 
         # α_l = softmax(wᵀ r_l*)
         self.score = nn.Linear(d_model, 1, bias=False)
@@ -71,9 +102,17 @@ class AttentionPoolingFusion(BaseFusionHead):
         self.last_alpha: Optional[torch.Tensor] = None
 
     def forward(
-        self, R_star: torch.Tensor, h_ctx: torch.Tensor
+        self,
+        R_star: torch.Tensor,
+        h_ctx: torch.Tensor,
+        use_anchor: Optional[bool] = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """([B, L, d_model], [B, d_in]) → (h_fusion [B, d_in], alpha [B, L])."""
+        """([B, L, d_model], [B, d_in]) → (h_fusion [B, d_in], alpha [B, L]).
+
+        Args:
+            use_anchor: `anchor="first"` 에서 호출자가 사이클별로 지정한다.
+                None 이면 `anchor` 모드의 기본 거동을 따른다.
+        """
         if h_ctx.shape[-1] != self.d_out:
             raise AssemblyError(
                 f"h_ctx 폭({h_ctx.shape[-1]})과 융합 출력 폭({self.d_out})이 다르다. "
@@ -88,6 +127,14 @@ class AttentionPoolingFusion(BaseFusionHead):
         # "중간층 집중" 예측(제안서 §7 ii)을 검증하는 데이터다.
         self.last_alpha = alpha.detach()
 
+        anchored = self._anchor_active(use_anchor)
+        if not anchored:
+            # 순수 사고 항. 토큰별 RMS 보정(ADR-013)이 스케일을 맡는다.
+            # `ramp` 게이트는 여기서 걸지 않는다 — RMSNorm 이 스케일 불변이라
+            # σ(g) 가 정확히 소거된다(실측 차이 3e-08). 보정 **뒤**에 걸어야
+            # 의미가 있으므로 `post_gate()` 가 담당한다.
+            return projected, alpha
+
         if self.fusion_type == "residual":
             h_fusion = h_ctx + projected
         elif self.fusion_type == "gate":
@@ -98,8 +145,30 @@ class AttentionPoolingFusion(BaseFusionHead):
 
         return h_fusion, alpha
 
+    def post_gate(self, h: torch.Tensor) -> torch.Tensor:
+        """보정 **뒤**에 적용하는 안정화 램프. `anchor="ramp"` 에서만 동작한다.
+
+        앵커를 뺀 대신 "작게 시작해 점진적으로 켜진다"는 성질(역할 ③)만 남기는
+        장치다. 보정 앞에 걸면 RMS 정규화가 소거하므로 반드시 뒤에 건다.
+        """
+        if self.anchor != "ramp":
+            return h
+        return torch.sigmoid(self.ramp) * h
+
+    def _anchor_active(self, use_anchor: Optional[bool]) -> bool:
+        """이 호출에서 앵커를 섞을지."""
+        if self.anchor == "ctx":
+            return True
+        if self.anchor in ("none", "ramp"):
+            return False
+        # anchor == "first": 호출자가 지정한다. 지정이 없으면 켠다(단일 판독 = 첫 토큰).
+        return True if use_anchor is None else bool(use_anchor)
+
     def extra_repr(self) -> str:
-        return f"d_model={self.d_model}, d_out={self.d_out}, type={self.fusion_type}"
+        return (
+            f"d_model={self.d_model}, d_out={self.d_out}, "
+            f"type={self.fusion_type}, anchor={self.anchor}"
+        )
 
 
-__all__ = ("AttentionPoolingFusion", "FusionType")
+__all__ = ("AttentionPoolingFusion", "AnchorMode", "FusionType")

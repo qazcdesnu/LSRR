@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -25,10 +26,23 @@ from lsrr.telemetry import ExperimentTracker
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    cfg = load_config(argv)
+
+    # 런 루트는 **실험 설정이 아니라 실행 인자**다. 설정 키로 두면 스냅샷에 들어가
+    # 같은 실험이 저장 위치에 따라 다른 신원을 갖게 된다.
+    ap = argparse.ArgumentParser(add_help=False)
+    ap.add_argument("--runs-dir", type=str, default="runs")
+    ap.add_argument("-h", "--help", action="store_true")
+    args, rest = ap.parse_known_args(argv)
+    if args.help:
+        print(__doc__)
+        print("옵션:\n  --runs-dir DIR   런 디렉터리 루트 (기본 runs)")
+        print("  나머지 인자는 설정 오버라이드다: exp=<name> 또는 key=value")
+        return 0
+
+    cfg = load_config(rest)
 
     exp_name = next(
-        (a.split("=", 1)[1] for a in argv if a.startswith(("exp=", "config="))), "exp"
+        (a.split("=", 1)[1] for a in rest if a.startswith(("exp=", "config="))), "exp"
     )
     seed = int(get_path(cfg, "seed", 42))
     generator = set_seed(seed, bool(get_path(cfg, "deterministic", True)))
@@ -50,7 +64,9 @@ def main(argv: list[str] | None = None) -> int:
         generator=generator,
     )
 
-    with ExperimentTracker(cfg, exp_name=exp_name, seed=seed) as tracker:
+    with ExperimentTracker(
+        cfg, exp_name=exp_name, seed=seed, root=args.runs_dir
+    ) as tracker:
         params = parameter_summary(model)
         backbone_n = bundle.encoder.num_parameters()
         tracker.update_meta(
@@ -71,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
         trainer = Trainer(model, bundle.objective, tracker, cfg, device=device)
         result = trainer.fit(loader)
         print(f"완료: {result['steps']} 스텝, {result['seconds']:.1f}초 → {tracker.dir}")
+        # 기계 판독용 한 줄. 스윕이 이 줄로 런 디렉터리를 집는다 —
+        # 사람이 읽는 줄을 파싱하게 두면 문구를 고칠 때 스윕이 조용히 깨진다.
+        print(f"RUN_DIR={tracker.dir}")
     return 0
 
 

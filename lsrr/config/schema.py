@@ -95,8 +95,9 @@ class Defaults:
     deterministic: bool = True
     device: str = "auto"
     m_max: int = 32
+    m_min: int = 1
     tbptt_k: int = 4
-    damping_alpha: float = 0.5
+    damping_alpha: float = 0.8
     deep_supervision_gamma: float = 0.85
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
+from lsrr.core.errors import ConfigError
 from lsrr.core.interfaces import BaseDataModule
 from lsrr.core.registry import DATA_REGISTRY
 from lsrr.core.types import DataSample
@@ -32,16 +33,34 @@ class MultiplicationDataset(BaseDataModule):
         digits: int = 4,
         seed: int = 42,
         sizes: dict[str, int] | None = None,
+        min_operand: int | None = None,
         **_: Any,
     ) -> None:
+        """
+        Args:
+            min_operand: 피연산자 하한. 1자리에서 `1 * n = n`처럼 **정답이 질문에
+                그대로 보이는** 조합을 배제할 때 쓴다. 1자리 81조합 중 17개(21%)가
+                여기 해당하며, 그대로 두면 복사만으로 21%를 맞혀 정확도가
+                무의미해진다 (I6가 로드 시점에 거부한다). `min_operand=2`로 두면
+                64조합이 남고 누출은 0이다.
+                None이면 자릿수에서 정해지는 기본 하한을 쓴다.
+        """
         self.digits = digits
         self.seed = seed
         self.sizes = {**_DEFAULT_SIZES, **(sizes or {})}
+        self.min_operand = min_operand
 
     def get_split(self, split: str) -> list[DataSample]:
         split = normalize_split(split)
         rng = random.Random(self.seed + _SPLIT_SEED_OFFSET[split])
         lo, hi = 10 ** (self.digits - 1), 10**self.digits - 1
+        if self.min_operand is not None:
+            lo = max(lo, int(self.min_operand))
+            if lo > hi:
+                raise ConfigError(
+                    f"min_operand={self.min_operand}가 {self.digits}자리 상한 {hi}를 "
+                    f"넘어 표본을 만들 수 없다."
+                )
         samples = []
         for _ in range(self.sizes[split]):
             a, b = rng.randint(lo, hi), rng.randint(lo, hi)

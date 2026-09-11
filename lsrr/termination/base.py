@@ -22,10 +22,26 @@ from lsrr.core.types import CycleDiagnostics, TerminationSignals
 class TerminationRuleBase(BaseTerminationRule):
     """정지 마스크 누적과 M_max 폴백을 공통 제공한다."""
 
-    def __init__(self, m_max: int = 32) -> None:
+    def __init__(self, m_max: int = 32, m_min: int = 1) -> None:
+        """
+        Args:
+            m_max: 폴백 상한. 모든 규칙이 여기서 반드시 정지한다 (I5).
+            m_min: 정지 하한. v2.1 §4.3 의 `M = min{m ∈ {M_min..M_max} | Δ<ε}`.
+                커리큘럼이 사고 스텝 예산을 강제하는 구간(§5.1 Stage 2)과,
+                첫 사이클의 Δ 가 우연히 작아 즉시 멈추는 것을 막는 데 쓴다.
+                **M_max 폴백보다 약하다** — 하한과 상한이 충돌하면 상한이 이긴다.
+        """
         if int(m_max) < 1:
             raise ValueError(f"m_max는 1 이상이어야 한다: {m_max}")
+        if int(m_min) < 1:
+            raise ValueError(f"m_min은 1 이상이어야 한다: {m_min}")
+        if int(m_min) > int(m_max):
+            raise ValueError(
+                f"m_min({m_min})이 m_max({m_max})를 넘는다 — 하한을 만족하기 전에 "
+                f"폴백이 걸려 의도한 깊이로 돌지 않는다."
+            )
         self.m_max = int(m_max)
+        self.m_min = int(m_min)
         self.stopped: Optional[torch.Tensor] = None
 
     def reset(self, batch_size: int, device: torch.device) -> None:
@@ -41,6 +57,7 @@ class TerminationRuleBase(BaseTerminationRule):
             delta_state=float(signals.delta_state.mean()),
             kl_div=None if signals.kl_div is None else float(signals.kl_div.mean()),
             entropy=None if signals.entropy is None else float(signals.entropy.mean()),
+            extra={"per_sample_delta": signals.delta_state.detach().cpu().tolist()},
         )
 
     def should_stop(
@@ -50,7 +67,10 @@ class TerminationRuleBase(BaseTerminationRule):
             self.reset(signals.delta_state.shape[0], signals.delta_state.device)
 
         met = self._criterion(signals, m).to(torch.bool)
-        fallback = (m + 1) >= self.m_max  # I5 — 하위 클래스가 우회할 수 없다
+        # 하한: M_min 이전에는 규칙이 만족해도 멈추지 않는다 (v2.1 §4.3).
+        if (m + 1) < self.m_min:
+            met = torch.zeros_like(met)
+        fallback = (m + 1) >= self.m_max  # I5 — 하위 클래스도 하한도 우회 못 한다
         self.stopped = self.stopped | met | fallback
         return self.stopped, self._diagnostics(signals, m)
 
@@ -58,7 +78,7 @@ class TerminationRuleBase(BaseTerminationRule):
         return False
 
     def __repr__(self) -> str:
-        return f"{type(self).__name__}(m_max={self.m_max})"
+        return f"{type(self).__name__}(m_min={self.m_min}, m_max={self.m_max})"
 
 
 __all__ = ("TerminationRuleBase",)

@@ -143,8 +143,14 @@ class LSRRModel(nn.Module):
         R0: torch.Tensor,
         hooks: Sequence[CycleHook] = (),
         is_eval: bool = False,
+        M: Optional[int] = None,
     ) -> ReasoningTrace:
-        """사이클 축 반복. 축 제어는 전부 runner의 일이다."""
+        """사이클 축 반복. 축 제어는 전부 runner의 일이다.
+
+        `M`을 넘기면 스케줄 샘플링을 건너뛴다. 깊은 감독이 판독 훅을 만들기 전에
+        TBPTT 윈도를 알아야 하므로, 호출자가 M을 먼저 뽑아 쓰는 경로다 (ADR-006).
+        평가 경로에서는 무시된다 — 그쪽은 종료 규칙이 M을 정한다.
+        """
         if self.runner is None:
             raise AssemblyError(
                 "CycleRunner가 조립되지 않았다. `lsrr.recurrence`는 M4에서 구현된다 "
@@ -153,7 +159,7 @@ class LSRRModel(nn.Module):
         return (
             self.runner.run_eval(R0, hooks=hooks)
             if is_eval
-            else self.runner.run_train(R0, hooks=hooks)
+            else self.runner.run_train(R0, hooks=hooks, M=M)
         )
 
     def read(

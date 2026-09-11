@@ -80,6 +80,21 @@ def check_cycle_budget(cfg: Any) -> None:
             f"termination.m_max({m_max}) < 스케줄 실효 최대 사이클({sched_max}). "
             f"학습이 평가 폴백보다 깊게 돌면 평가에서 학습 분포 밖으로 나간다.",
         )
+
+    # 정지 하한 (v2.1 §4.3). 로드 시점에 잡지 않으면 하한이 폴백에 먹혀
+    # "의도한 깊이로 돌지 않는다"가 조용히 성립한다.
+    m_min = get_path(cfg, "termination.m_min")
+    if m_min is not None:
+        _require(
+            int(m_min) >= 1,
+            f"termination.m_min은 1 이상이어야 한다 (={m_min}).",
+        )
+        if m_max is not None:
+            _require(
+                int(m_min) <= int(m_max),
+                f"termination.m_min({m_min}) > termination.m_max({m_max}). "
+                f"하한을 만족하기 전에 I5 폴백이 걸려 의도한 깊이로 돌지 않는다.",
+            )
     if tbptt_k is not None and sched_max is not None:
         _require(
             int(tbptt_k) <= int(sched_max),

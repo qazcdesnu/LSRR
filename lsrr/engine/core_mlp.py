@@ -57,7 +57,7 @@ def build_mlp_onepass(
     expansion: int = 2,
     n_blocks: int = 1,
     dropout: float = 0.0,
-    damping_alpha: float = 0.5,
+    damping_alpha: float = 0.8,
     max_cycles: int = 32,
     cycle_embedding: bool = True,
     reinject_r0: str = "gate",

@@ -16,9 +16,9 @@
 
 | 모듈 | 역할 | 상태 |
 |---|---|---|
-| `criteria.py` | 게이트 술어 구현 (유의성 검정 포함) | 계획 |
-| `definitions.py` | Phase별 게이트 집합 정의 | 계획 |
-| `report.py` | PASS/FAIL 판정문 + 킬 스위치 신호 | 계획 |
+| `criteria.py` | 게이트 술어 구현 (유의성 검정 포함) | 검증 |
+| `definitions.py` | Phase별 게이트 집합 정의와 임계값 | 검증 |
+| `report.py` | PASS/FAIL 판정문 + 킬 스위치 신호 | 검증 |
 
 ## Phase 0 게이트 (GPT-2 + 곱셈 · ProsQA)
 
@@ -54,4 +54,6 @@ BasePhaseGate.evaluate(run_records) -> GateVerdict { passed, value, threshold, e
 없음. 신규 (ADR-008).
 
 ## 상태
-계획 — M5
+**검증** — 전 모듈 완료 (M5). `scripts/check_gates.py` 가 ①~④ 에 대해 PASS/FAIL/판정불가를 내고 종료 코드로 신호한다 (0 PASS / 1 FAIL / 2 킬 스위치 / 3 데이터 부족).
+
+**판정 불가는 통과가 아니다.** 데이터가 없으면 FAIL 이 아니라 '미완' 으로 구분해 보고하며, 킬 스위치는 **측정된** 실패에서만 발동한다 — 아키텍처를 재검토하라는 신호는 실측이 뒷받침해야 한다.

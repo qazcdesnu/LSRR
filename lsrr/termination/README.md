@@ -19,7 +19,7 @@ $$\Delta^{(m)} = \frac{1}{L}\sum_l \lVert r_l^{(m+1)} - r_l^{(m)}\rVert_2 < \var
 | `signals.py` | 신호 계산 공통화: 상태 Δ(L2), 출력 KL, 출력 엔트로피 | 계획 |
 | `rules.py` | `fixed_m` / `delta_state`(기본) / `kl_output` / `entropy_output` — **Ablation B** | 계획 |
 | `calibration.py` | ε 스윕, 검증셋 기반 임계값 선택, 파레토 지원 | 계획 |
-| `behavior.py` | 수렴 거동 분류: `converged` / `oscillating` / `drifting` | 계획 |
+| `behavior.py` | 수렴 거동 분류: `converged` / `oscillating` / `drifting` — **게이트 ④** | 검증 |
 
 ## 핵심 계약
 

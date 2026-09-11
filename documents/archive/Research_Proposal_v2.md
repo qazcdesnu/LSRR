@@ -1,0 +1,314 @@
+# 연구계획서: 동적 궤적 방출형 계층 상태 순환 추론기
+## Layer-State Recurrent Reasoner v2 (LSRR-v2)
+*Convergence-Aligned Dynamic Thought Rollout and LoRA Alignment with Progressive Latentization Curriculum*
+
+---
+
+## 1. 연구 개요 및 핵심 주장 (Core Thesis)
+
+기존 잠재 추론(Continuous Latent Reasoning) 연구들은 언어적 병목을 해소했으나 두 가지 근본적인 딜레마에 직면해 있다:
+1. **트랜스포머 재귀 호출 병목 (Sequential Rollout Bottleneck):** Coconut, iCoT 등은 $k$단계 잠재 사고를 전개하기 위해 거대한 트랜스포머 본체를 $k+1$회 순차 순전파(forward)해야 하므로 연산 지연과 FLOPs가 급증하고, 학습 시 병렬성을 완전히 상실한다.
+2. **사고-답변 인터페이스의 병목 (Interface & Manifold Bottleneck):** 반면 LSRR v1은 트랜스포머 1회 인코딩 후 전 레이어 은닉 상태 $H \in \mathbb{R}^{L \times d}$를 분리된 경량 양방향 SSM으로 $M$회 반복 정제하는 혁신을 제안했으나, 정제 연산량은 $M$에 비례해 확장됨에도 그 결과를 단일 벡터 $h_{\text{fusion}} \in \mathbb{R}^d$ ($K=1$)로 압축하여 주입하고 백본을 100% 동결함으로써, 다단계 사고를 백본에 전달하는 통신 대역폭의 한계와 기성 LLM 언어 매니폴드와의 표현 불일치(representation gap)를 남겼다.
+
+**LSRR-v2는 이 두 한계를 동시에 극복하는 차세대 아키텍처를 제안한다:**
+- **[원리 1] 수렴 스텝 동기화 동적 사고 토큰 방출 (Convergence-Aligned Dynamic Thought Rollout):** 양방향 SSM 사고 엔진의 수렴 판정($\Delta^{(m)} < \varepsilon$)에 의해 결정된 실제 정제 사이클 수 $M$과 정확히 일치하는 가변 길이 잠재 사고 토큰 시퀀스 $\mathcal{H}_{\text{thought}} = [h^{(1)}, h^{(2)}, \dots, h^{(M)}] \in \mathbb{R}^{M \times d}$를 방출한다. 쉬운 문제는 소수 토큰(예: $M=2$), 복잡한 다중 홉 문제는 다수 토큰(예: $M=8$)으로 백본에 제공되어, 문제 난이도에 비례하는 **Test-Time Compute Scaling이 잠재 토큰 시퀀스 길이로 자연스럽게 물리화**된다.
+- **[원리 2] 경량 LoRA 백본 매니폴드 정렬 (LoRA Backbone Alignment):** 백본의 사전학습 가중치를 동결한 채 핵심 Attention 및 MLP 계층에 경량 LoRA 어댑터를 장착한다. 사전학습된 일반 언어 지식의 망각(catastrophic forgetting)을 원천 차단하면서, 방출된 연속 잠재 사고 토큰 시퀀스를 언어 디코딩 공간으로 매끄럽게 흡수·정렬한다. (연속 잠재 입력에 백본 적응이 반드시 필요한지는 가설이며, Ablation B — Frozen vs LoRA — 가 판정한다.)
+- **[원리 3] 순방향 잠재화 커리큘럼 (Progressive Front-to-Back Latentization Curriculum):** Coconut이 실증한 커리큘럼 방향을 계승하여, 자연어 CoT의 **앞쪽 추론 단계부터** 점진적으로 잠재 상태로 치환(Front-to-Back Replacement)함과 동시에 SSM 사고 스텝 예산 $M$을 $1 \to 2 \to \dots \to K$로 확장하는 다단계 커리큘럼 학습을 적용하여, 잠재 추론 공간의 콜드 스타트 붕괴를 방지하고 최적의 추론 궤적을 안정적으로 안착시킨다. (잠재 토큰은 질문 직후에 위치하므로, 초반 스텝의 흡수가 [질문 → 잠재(초반 추론) → 텍스트(후반 추론) → 정답]의 논리적 순서를 보존한다.)
+
+단 1회의 트랜스포머 문맥 인코딩 + 경량 SSM의 동적 수렴 스캔 + LoRA 백본 연속 디코딩의 결합으로, **Coconut 대비 $\mathcal{O}(k)$배 빠른 추론 속도와 학습 병렬성을 달성하면서도 단일 벡터 압축의 한계를 넘어 명시적 CoT 이상의 추론 깊이**를 달성한다.
+
+---
+
+## 2. 문제 설정 및 기존 연구의 한계
+
+### 2.1 트랜스포머 순차 롤아웃의 한계 (Coconut, iCoT)
+- **비용의 $\mathcal{O}(k)$ 폭발:** Coconut(Meta/UCSD, 2024)은 $k$개의 연속 잠재 사고 토큰을 생성하기 위해 트랜스포머 전체 계층($L$개 층)을 $k$번 독립적으로 재실행한다. 32-layer LLM에서 6단계 잠재 추론을 수행하면 192개 레이어를 순차 통과해야 한다.
+- **학습 시 Teacher-Forcing 병렬성 상실:** 앞선 잠재 토큰의 출력이 다음 순전파의 입력이 되므로, 일반 트랜스포머 학습의 최대 장점인 Causal Mask 기반 완전 병렬 학습(time-parallelism)이 불가능하며 Step-by-Step 순차 순전파가 강제된다.
+
+### 2.2 고정 길이/단일 벡터 압축의 정보 병목 (LSRR v1 및 기존 압축 모델)
+- **Reasoning Step Budget의 본질:** CoT 연구(Wei et al., 2022)와 Pause Token 연구(Goyal et al., 2023)가 일관되게 증명한 사실은 **"사고에 할당된 중간 토큰의 수(sequence length) 자체가 곧 연산 용량이자 워킹 메모리(scratchpad)"**라는 점이다.
+- **LSRR v1의 단일 벡터($K=1$) 압축 병목:** v1은 전 레이어 상태 $H$를 $M$회 훌륭하게 정제했으나, 최종 단계에서 단일 쿼리 어텐션 풀링을 통해 $1 \times d$ 크기의 $h_{\text{fusion}}$ 하나로 축약했다. 다중 홉 추론에서 파생되는 다수의 중간 브리지 엔티티, 조건 분기, 중간 연산 결과를 $d$차원 단일 벡터에 모두 패킹하는 것은 치명적인 용량적 병목(capacity bottleneck)을 초래한다.
+
+### 2.3 백본 완전 동결(Strict Freeze)의 표현 단절
+- 기성 사전학습 LLM의 Self-Attention과 LM Head는 어휘 사전(Vocabulary)의 이산 토큰 임베딩 분포 위에서 수십억 토큰을 학습했다.
+- 완전히 동결된 백본에 외부 모듈이 생성한 연속 잠재 벡터를 단일 프롬프트로 주입하면, 백본 내부 어텐션 키-쿼리 공간과의 매니폴드 불일치(representation manifold mismatch)가 발생하여 잠재 벡터에 담긴 풍부한 정제 정보가 최종 텍스트 디코딩으로 온전히 전이되지 못할 수 있다.
+- 반대로 전체 파라미터 풀 파인튜닝(Full FT)을 수행하면 VRAM 소모가 극심해지고, 모델이 본래 보유한 문장 생성 능력과 일반 상식 지식이 파괴(catastrophic forgetting)된다.
+
+### 2.4 콜드 스타트 학습 붕괴와 순차 학습의 당위성
+- 잠재 공간 추론을 스크래치부터 바로 최종 정답 $y$로 종단간(End-to-End) 학습시키면, 모델은 복잡한 다단계 잠재 추론을 전개하기보다 입력 문맥의 통계적 편향(shortcut)에 의존하거나 잠재 상태가 특정 상수로 붕괴(representation homogenization)한다.
+- Coconut 연구는 **"명시적 언어 추론(CoT)을 앞 단계부터 점진적으로 잠재 상태로 흡수시키는 연속적 커리큘럼(continuous curriculum)"**이 잠재 추론 학습의 핵심 성공 요인임을 실증했다.
+
+---
+
+## 3. 설계 근거 및 이론적 기초 (Evidence Chain v2)
+
+LSRR-v2의 설계는 8개의 상호 결합된 실증적 논증 사슬 위에 구축된다.
+
+```
+[① 층별 정보 분산] ──> [② 전층 H 추출] ──> [③ 양방향 SSM 정제] ──> [④ 수렴 판정 Δ < ε]
+                                                                        │
+[⑧ 단계적 CoT 잠재화] <── [⑦ LoRA 백본 정렬] <── [⑥ 백본 연속 디코딩] <── [⑤ 동적 M개 사고 토큰 방출]
+  (Coconut 커리큘럼)       (매니폴드 일치)         (KV 캐시 보존)         (용량 병목 해소)
+```
+
+1. **최종 레이어 $h^{(L)}$의 정보 소실:** 층 개입 해석 연구(Stages of Inference)는 $h^{(L)}$이 다음 토큰 어휘 예측을 위해 극도로 선명화(residual sharpening)되어 중간 추론 산출물을 유실함을 입증했다. 유의미한 추론 재료는 중간 계층에 분산되어 있다.
+2. **전층 상태 $H$의 잠재 표현력:** 동결 백본의 전 레이어 상태를 활용하는 InnerThoughts 연구는 $H$가 단일 층 대비 압도적인 추론 단서를 보존함을 증명했다.
+3. **상$\to$하 되돌림의 가치와 양방향 SSM:** Back-patching 연구는 상위층의 고수준 추상 정보를 하위층으로 피드백하는 것만으로 다중 홉 오답의 최대 66%를 복원함을 보였다(오라클 상한). 이는 비인과적 전체 궤적 평활화(Kalman smoothing)와 동형이며, Quasiseparable 구조의 양방향 SSM(Hydra)이 최적의 연산자다.
+4. **수렴 기반 자율 정제 동역학:** DEQ(Deep Equilibrium Models) 및 Huginn의 실증 결과, 반복 정제 과정의 상태 차이 $\Delta^{(m)} = \|R^{(m)} - R^{(m-1)}\|$은 정제가 안정될 때 급격히 감소한다. 수렴 여부는 문제의 해결 완료를 나타내는 자연스러운 내부 척도다.
+5. **사고 스텝 수와 잠재 토큰 수의 동기화 (New):** 계산 복잡도 이론에 따르면 트랜스포머의 추론 표현력은 시퀀스 길이에 비례하여 확장된다. SSM이 $M$단계 만에 수렴했다면, 그 문제는 $M$단계의 정제 궤적을 요구하는 난이도다. 중간 궤적 $h^{(1)}, \dots, h^{(M)}$을 버리지 않고 시퀀스로 방출함으로써 백본에 $M$개의 워킹 메모리 슬롯을 제공한다.
+6. **KV 캐시 재활용을 통한 연속 디코딩 (New):** 방출된 $M$개의 잠재 토큰은 질문 토큰 시퀀스의 바로 뒤에 덧붙여진다. 질문 토큰들의 KV 캐시는 추론 시 재활용되므로 추가 연산은 오직 $M$개의 가상 토큰에 대한 증분 어텐션(incremental attention)으로 제한된다.
+7. **LoRA를 통한 매니폴드 정렬 (New — 가설, Ablation B 판정):** 사전학습 가중치 $W_0$를 동결하고 저차원 행렬 $\Delta W = B \cdot A$만 학습함으로써, 기성 LLM의 언어적 생성 능력을 보존하면서 연속 잠재 벡터를 해석하는 전용 수용체(receptors)를 백본에 형성한다. 단, 동결 백본 + 학습 투영만으로도 연속 벡터 주입이 작동한 선례(SoftCoT, prefix-tuning 계열)가 있으므로 '필요조건'이 아닌 '유효 가설'로 두고 Frozen vs LoRA 절제로 판정한다.
+8. **순방향 커리큘럼 학습의 안정성 (New — Coconut 계승):** 복잡한 추론을 한 번에 잠재화하면 최적화가 실패한다. 명시적 CoT의 **초반 추론 단계부터** 순차적으로 잠재 토큰으로 흡수(Front-to-Back Latentization)시키면서 사고 스텝 $M$을 점진적으로 확장하는 방식이 Coconut에서 실증된 안정 레시피다. 단, 본 구조의 $h^{(m)}$은 특정 CoT 스텝의 1:1 대응물이 아니라 전체 메모리의 $m$번째 정제 스냅숏이므로, 커리큘럼은 'CoT의 점진 단축과 $M$ 예산의 점진 확장의 공진행'으로 정의하며 스텝-토큰 대응은 주장하지 않는다. 커리큘럼 방향 자체의 효과는 Ablation C(Front-to-Back vs Back-to-Front vs Cold Start)에서 경험적으로 검증한다.
+
+---
+
+## 4. 핵심 아키텍처 상세 명세 (LSRR-v2 Architecture)
+
+```
+[Question Tokens: x_1, ..., x_T]
+             │
+   (Transformer 1회 Forward)  ──> KV Cache 저장 (x_1...x_T)
+             │
+   Layer Hidden States H = [h^(1), ..., h^(L)] in R^(L x d)
+             │
+      [Layer Adapter]
+             │
+            R^(0) ────────────────────────┐
+             │                            │ (Residual / Input Injection)
+     ┌───────┴────────────────────────┐   │
+     │ Bi-directional Hydra-SSM Engine│<──┘
+     │    Cycle m = 1, 2, ..., M      │
+     │    Check Δ^(m) < ε             │
+     └───────┬────────────────────────┘
+             │
+  Dynamic Trajectory Rollout (M steps)
+  h^(1) = Pool(R^(1)),  h^(2) = Pool(R^(2)),  ...,  h^(M) = Pool(R^(M))
+             │
+  Latent Thought Tokens: H_thought = [h^(1), h^{(2)}, ..., h^(M)] in R^(M x d)
+             │
+             ▼
+[Decoupled Backbone with LoRA]
+Input: [ x_1, ..., x_T (from KV cache) ] + [ h^(1), ..., h^(M) ]
+             │
+   Autoregressive Generation (LoRA adapted)
+             ▼
+[Answer Tokens: y_1, y_2, ..., y_K]
+```
+
+### 4.1 계층 상태 수집 및 어댑터 (Layer-State Collector)
+입력 질문 시퀀스 $X = [x_1, \dots, x_T]$에 대해 백본 트랜스포머를 **단 1회 순전파**한다. 마지막 토큰 위치 $T$에서의 전 계층 은닉 상태를 추출하고 전처리한다:
+
+$$H = [h_T^{(1)}, h_T^{(2)}, \ldots, h_T^{(L)}] \in \mathbb{R}^{L \times d}$$
+
+각 레이어의 표현 공간 불일치와 노름 스케일 차이를 보정하기 위해 학습 가능한 Layer-wise Adapter와 Layer Position Embedding을 통과시켜 초기 사고 메모리 $R^{(0)}$를 구성한다:
+
+$$R^{(0)} = \mathrm{LayerNorm}\left( H W_{\text{layer}} + E_{\text{depth}} \right) \in \mathbb{R}^{L \times d_{\text{ssm}}}$$
+
+**LoRA 적용 범위(결정):** LoRA는 인코딩·디코딩 패스에 공통 적용한다(성능 우선 결정). 이에 따라 학습 중 $H$와 질문 KV는 LoRA 갱신을 반영해 매 스텝 재계산되며, v1의 정적 $H$ 캐시 경제는 포기한다. 인코딩 패스를 순수 동결로 유지해 캐시를 보존하는 변형(LoRA를 디코딩에만 적용)은 절제 실험 항목으로 마킹한다. [Ablation-마킹: LoRA 적용 패스 범위]
+
+### 4.2 양방향 Hydra-SSM 정제 엔진 (Bi-directional Hydra-SSM Engine)
+초기 메모리 $R^{(0)}$를 입력받아 격자 밖의 정제 사이클 $m = 0, 1, \dots, M-1$ 동안 반복 정제한다:
+
+$$R^{(m+1)} = (1-\alpha) \cdot R^{(m)} + \alpha \cdot \mathcal{S}_\phi\left(R^{(m)}, R^{(0)}, e_m\right)$$
+
+- $\mathcal{S}_\phi$: 레이어 축(길이 $L$)을 따라 상향(Bottom-up) 및 하향(Top-down)을 동시에 스캔하는 Quasiseparable 양방향 SSM(Hydra).
+- $\alpha \in (0, 1]$: 진동 억제 및 수렴 유도를 위한 감쇠 계수(Damping Factor, 기본값 $\alpha = 0.8$).
+- $R^{(0)}$: 원본 문맥의 정보 유실을 방지하는 상시 스킵 연결(Context Re-injection).
+- $e_m$: 현재 정제 사이클 $m$을 나타내는 학습 가능한 사이클 임베딩.
+
+### 4.3 수렴 판정 및 동적 스텝 결정 (Dynamic Convergence Halt)
+매 사이클 $m$마다 메모리의 평균 상태 변화량을 계산한다:
+
+$$\Delta^{(m)} = \frac{1}{L \cdot d_{\text{ssm}}} \sum_{l=1}^L \| r_l^{(m+1)} - r_l^{(m)} \|_1$$
+
+종료 조건은 다음과 같다:
+$$M = \min \left\{ m \in \{M_{\min}, \dots, M_{\max}\} \mid \Delta^{(m)} < \varepsilon \right\}$$
+수렴 기준 $\varepsilon$을 만족하지 못하면 최대 사이클 한도 $M_{\max}$에서 폴백(fallback) 종료한다.
+
+### 4.4 동적 궤적 방출 (Dynamic Trajectory Rollout of Thought Tokens)
+**LSRR-v2의 핵심 아키텍처적 도약:**
+v1처럼 수렴 후 단일 벡터 하나로 합치지 않고, 각 정제 사이클 $m \in \{1, 2, \dots, M\}$의 중간 메모리 $R^{(m)}$로부터 스텝별 잠재 사고 토큰 $h^{(m)}$을 방출한다:
+
+$$\beta_{l}^{(m)} = \mathrm{softmax}\left( w_{\text{pool}}^\top r_l^{(m)} \right) \in \mathbb{R}^L$$
+
+$$h_{\text{ssm}}^{(m)} = \sum_{l=1}^L \beta_l^{(m)} r_l^{(m)} \in \mathbb{R}^{d_{\text{ssm}}}$$
+
+$$h^{(m)} = W_{\text{proj}} \cdot h_{\text{ssm}}^{(m)} + h_T^{(L)} \in \mathbb{R}^d$$
+
+최종 방출되는 잠재 사고 토큰 시퀀스는 $M$개의 연속 벡터로 구성된다:
+
+$$\mathcal{H}_{\text{thought}} = \left[ h^{(1)}, h^{(2)}, \ldots, h^{(M)} \right] \in \mathbb{R}^{M \times d}$$
+
+- **의미:** $h^{(1)}$은 1차 정제된 직관적 표상, $h^{(m)}$은 $m$번의 양방향 층간 평활화를 거쳐 논리적 정합성이 심화된 고차 표상이다. 백본은 단순한 최종 결론뿐 아니라 **사고가 정제되어 온 전 과정(thought trajectory)을 어텐션 윈도 내에 보유**하게 된다.
+- **후반 토큰 유사성에 대한 가정:** 수렴 설계상 후반 사이클의 토큰들은 상호 유사해진다. 이는 수렴 과정 자체가 궤적에 담기는 자연스러운 성질이며, 어느 정도 수렴한 이후 중단하므로 중복성으로 인한 정보 손실은 크지 않다고 가정한다.
+
+### 4.5 백본 LoRA 매니폴드 정렬 및 연속 디코딩
+백본 트랜스포머의 Self-Attention 투영 행렬($W_q, W_k, W_v, W_o$) 및 MLP 게이트/업 투영 행렬에 저차원 어댑터(LoRA)를 결합한다:
+
+$$W = W_0 + \frac{\alpha_r}{r} B \cdot A, \qquad A \in \mathbb{R}^{r \times d_{\text{in}}}, \ B \in \mathbb{R}^{d_{\text{out}} \times r}, \ r \ll d$$
+
+- **입력 시퀀스 결합:**
+  질문 토큰 $X = [x_1, \dots, x_T]$의 KV 캐시가 이미 존재하므로, $M$개의 잠재 토큰 $\mathcal{H}_{\text{thought}}$를 가상 입력 토큰 임베딩 자리에 순차 주입하여 KV 캐시를 증분 갱신한다.
+- **답변 생성:**
+  이어지는 정답 토큰 시퀀스 $Y = [y_1, \dots, y_K]$는 $\mathcal{H}_{\text{thought}}$의 마지막 위치로부터 표준 자기회귀(Autoregressive) 방식으로 생성된다.
+
+$$P(Y \mid X) = \prod_{k=1}^K P\left(y_k \mid x_1, \dots, x_T, h^{(1)}, \dots, h^{(M)}, y_{<k} ; W_0, \Theta_{\text{LoRA}}\right)$$
+
+---
+
+## 5. 단계적 잠재화 커리큘럼 학습 (Progressive Latentization Curriculum)
+
+Coconut(2024)의 발견에 따르면, 복잡한 다단계 추론을 처음부터 잠재 공간에 맡기면 심각한 그래디언트 소실과 표현 붕괴가 발생한다. LSRR-v2는 Coconut의 검증된 방향을 계승하여 **"CoT 단계의 순방향 잠재화(Front-to-Back Latentization) + SSM 사고 스텝 $M$의 점진적 확장"**을 결합한 4단계 순차 커리큘럼을 제안한다.
+
+```
+Stage 0 (Warmup)       : [Question] ───────────────────────────> [CoT 1] [CoT 2] [CoT 3] -> [Answer]
+Stage 1 (Bridge M=1)   : [Question] -> [ h^(1) ] ──────────────> [CoT 1] [CoT 2] [CoT 3] -> [Answer]
+Stage 2 (Curriculum k) : [Question] -> [ h^(1) ] [ h^(2) ] ────> [CoT 2] [CoT 3] ───────> [Answer]  (k=1: CoT 1 흡수)
+Stage 3 (Full Latent)  : [Question] -> [ h^(1) ... h^(M) ] ─────────────────────────────> [Answer]
+                          (Dynamic M via Δ < ε, No CoT Tokens in Inference)
+```
+
+### 5.1 커리큘럼 4단계 상세 구성
+
+#### [Stage 0] LoRA 백본 추론 정렬 (CoT Baseline Warmup)
+- **목표:** 백본에 장착된 LoRA 어댑터가 태스크의 추론 패턴과 정답 생성 포맷에 익숙해지도록 예열.
+- **구성:** SSM 엔진은 바이패스하고, 표준 질문 $\to$ CoT 언어 토큰 $C = [c_1, \dots, c_S]$ $\to$ 정답 $y$에 대해 LoRA 가중치만 NLL 손실로 사전 학습.
+- **비용:** 매우 짧은 에포크(약 0.5~1 에포크).
+
+#### [Stage 1] 단일 잠재 브리지 개통 ($M=1$ Latent Bridge)
+- **목표:** 레이어 상태 추출 $H \to$ SSM 엔진 $\to$ 백본 LoRA 수용체 간의 종단간 그래디언트 파이프라인 형성.
+- **구성:** SSM 정제 사이클을 $M=1$로 고정. 단일 잠재 사고 토큰 $h^{(1)}$을 방출. CoT는 아직 제거하지 않는다.
+- **입력 구조:** $[X, h^{(1)}, c_1, c_2, \dots, c_S, y]$
+- **효과:** 모델은 $h^{(1)}$이 문맥 전체의 전층 정보를 요약하여 CoT 생성의 질을 높이는 '촉매(catalyst)'로 작용하도록 파라미터를 정렬.
+
+#### [Stage 2] 순방향 CoT 치환 및 잠재 스텝 확장 (Front-to-Back Latent Replacement)
+- **원리 (Coconut 커리큘럼 계승):** CoT의 **초반 추론 단계부터** 순차적으로 언어 토큰을 제거하고, 그만큼 SSM의 정제 스텝 예산을 확장한다. 잠재 토큰이 질문 직후에 위치하므로, 초반 스텝의 흡수가 시퀀스의 논리적 순서([질문 → 잠재화된 초반 추론 → 언어화된 후반 추론 → 정답])를 보존한다.
+- **커리큘럼 전개 ($k = 1 \to 2 \dots \to K_{\text{cot}}$):**
+  - **Step $k=1$:** CoT의 첫 번째 단계 제거. SSM 스텝 $M=2$ 설정.
+    입력: $[X, h^{(1)}, h^{(2)}, c_2, \dots, c_S, y]$
+  - **Step $k=2$:** CoT의 앞쪽 2개 단계 제거. SSM 스텝 $M=3$ 설정.
+    입력: $[X, h^{(1)}, h^{(2)}, h^{(3)}, c_3, \dots, c_S, y]$
+  - 점진적으로 앞쪽 언어 CoT 토큰을 잠재 토큰 $h^{(m)}$이 흡수하면서, 모델은 자연어 문장 없이도 연속 공간에서 중간 연산 상태를 다음 스텝으로 전달하는 법을 배운다.
+- **주의:** $h^{(m)}$은 제거된 특정 CoT 스텝의 1:1 대응물이 아니라 전체 메모리의 $m$번째 정제 스냅숏이다. 커리큘럼은 스텝-토큰 대응이 아니라 'CoT 점진 단축 + $M$ 예산 점진 확장'의 공진행으로 정의된다. 커리큘럼 방향의 효과는 Ablation C에서 검증한다. [Ablation-마킹: 커리큘럼 방향]
+
+#### [Stage 3] 완전 잠재 동적 수렴 추론 (Fully Latent Dynamic Reasoning)
+- **목표:** 중간 언어 CoT 토큰을 100% 제거하고, SSM의 자율 수렴 판정에 따라 최적 개수의 사고 토큰을 방출하여 정답을 즉시 생성.
+- **구성:**
+  - 자연어 CoT 제거: 입력은 오직 $[X, h^{(1)}, \dots, h^{(M)}, y]$.
+  - 동적 수렴 조건 활성화: 고정 스텝이 아닌 $\Delta^{(m)} < \varepsilon$ 기준으로 $M$ 결정.
+  - Test-time compute scaling 달성: 복잡한 입력일수록 스스로 $M$을 늘려 충분한 사고 토큰을 방출한 뒤 정답을 출력.
+
+### 5.2 종합 손실 함수 (Loss Formulation)
+
+$$L_{\text{total}} = L_{\text{NLL}}(Y) + \lambda_{\text{cot}} L_{\text{CoT-aux}} + \lambda_{\text{ds}} L_{\text{DeepSup}} + \lambda_{\text{reg}} L_{\text{VarReg}}$$
+
+1. **최종 정답 손실 $L_{\text{NLL}}(Y)$:**
+   방출된 잠재 사고 토큰 시퀀스 $\mathcal{H}_{\text{thought}}$ 조건 하 정답 토큰의 NLL(타깃은 정답 토큰 one-hot 분포의 표준 cross-entropy):
+   $$L_{\text{NLL}} = - \sum_{t=1}^K \log P(y_t \mid X, h^{(1)}, \dots, h^{(M)}, y_{<t})$$
+2. **보조 CoT 손실 $L_{\text{CoT-aux}}$ (Stage 0~2 전용):**
+   남아 있는 자연어 CoT 토큰들에 대한 교차 엔트로피 손실. Stage 3에서는 $\lambda_{\text{cot}} = 0$.
+3. **궤적 깊은 감독 $L_{\text{DeepSup}}$ (Anytime Convergence Anchor):**
+   중간 사이클 $m$에서도 정답을 예측하도록 유도하여 조기 수렴을 촉진(답-앵커형; 궤적 접두 $h^{(1..m)}$만으로 답 판독):
+   $$L_{\text{DeepSup}} = \sum_{m=1}^{M-1} \gamma^{M-m} \cdot \left[ - \log P(y_1 \mid X, h^{(1)}, \dots, h^{(m)}) \right]$$
+4. **분산 정규화 $L_{\text{VarReg}}$ (2성분 재정식화 — 수렴 목표와의 충돌 제거):**
+   사이클 간 차이를 벌점화하던 기존 단일 정의는 수렴 설계와 상충하므로, 축과 구간을 분리한 2성분으로 재정의한다.
+   - **(b) 상태 내부 분산 하한(전 사이클 적용):** 각 사이클의 메모리 $R^{(m)}$ 내부(레이어·차원 축)의 분산 하한을 유지하여 상수 붕괴(representation collapse)를 방지:
+     $$L_{\text{VarReg}}^{\text{state}} = \frac{1}{M}\sum_m \max\left(0, \sigma_{s}^2 - \mathrm{Var}_{l,\,\text{dim}}\big(R^{(m)}\big)\right)$$
+   - **(a) 초기 탐색 다양성(초기 $\lceil M/4 \rceil$ 사이클에만 적용):** 초반 사이클의 방출 토큰들이 조기에 동질화되지 않고 다양한 탐색을 수행하도록, 사이클 간 다양성 하한을 초기 구간에 한정 부과:
+     $$L_{\text{VarReg}}^{\text{explore}} = \max\left(0, \sigma_{t}^2 - \mathrm{Var}_{m \le \lceil M/4 \rceil}\big(h^{(m)}\big)\right)$$
+   - 후반(수렴 꼬리) 구간에는 다양성 항을 적용하지 않으므로 수렴 종료와 간섭하지 않는다. 초기 구간 비율(1/4)과 다양성 항 유무는 절제 실험 항목이다. [Ablation-마킹: VarReg 초기 구간 적용]
+
+---
+
+## 6. 실험 계획 및 평가 프로토콜
+
+### 6.1 백본 및 데이터셋
+
+| 구분 | 대상 모델 / 데이터셋 | 주요 목적 및 검증 가설 |
+|---|---|---|
+| **백본 LLM** | • GPT-2 (124M)<br>• LLaMA-3.2-1B-Instruct<br>• LLaMA-3.2-3B | • 소형 모델에서의 아키텍처 원리 검증<br>• 기성 지시 튜닝 모델에서의 LoRA 정렬 및 스케일 확장성 |
+| **주 벤치마크 (다중 홉 추론)** | • ProsQA / ProntoQA (1~5 hop)<br>• GSM8k-Aug (38.5만 증강셋)<br>• GSM-Hard, SVAMP, MultiArith | • 홉 수에 따른 동적 수렴 스텝 $M$의 비례성 실증<br>• 다단계 수학 추론에서 CoT 대비 정확도 및 토큰 효율성 |
+| **알고리즘 및 합성 태스크** | • 다자리 곱셈 (Big-Bench)<br>• Graph Connectivity | • 순수 계산 깊이(circuit depth)와 잠재 토큰 수의 상관성 |
+| **일반화/OOD 평가** | • CommonsenseQA (CODI CoT셋)<br>• ARC-Challenge | • 수학 외 일반 상식 추론으로의 전이 능력 검증 |
+
+### 6.2 비교 베이스라인 및 메트릭
+
+#### [비교 대상 모델]
+1. **Direct Answering (No-CoT):** 잠재 사고 없이 입력 즉시 정답 생성.
+2. **Standard CoT (SFT):** 자연어 CoT 토큰을 모두 생성한 후 정답 도출.
+3. **LoRA-only (귀속 통제 베이스라인):** 잠재 토큰 없이 동일 LoRA 예산으로 과제 파인튜닝만 수행. LSRR-v2의 이득에서 'LoRA 자체의 과제 적응 효과'를 분리하기 위한 필수 통제군.
+4. **iCoT (ICoT-KD / ICoT-SI):** 수직 증류·커리큘럼 내재화 계열(공표치 인용).
+5. **Coconut (Meta/UCSD):** 트랜스포머 순차 재실행 기반의 잠재 추론.
+6. **CODI:** 자기증류 기반 연속 사고 압축(공표치 인용).
+7. **SIM-CoT:** 스텝 수준 감독 잠재 추론(공표치 인용) — 잠재 토큰 시퀀스를 쓰는 v2의 가장 직접적인 외부 경쟁군.
+8. **Pause Tokens (Goyal et al.):** 고정/가변 `<pause>` 토큰 주입 모델. 공정성을 위해 LoRA를 동일 예산으로 결합한 매칭 버전으로 비교.
+9. **LSRR-v1:** 전층 $H$ 정제 후 단일 벡터 $h_{\text{fusion}}$ 압축 및 완전 동결 백본.
+10. **LSRR-v2 (Ours):** 동적 $M$ 궤적 방출 + LoRA 백본 정렬 + 순차 커리큘럼.
+
+외부 베이스라인(4~7)은 동일 세팅(학습 데이터·백본 변형·평가 규칙)의 공표치만 인용하고 출처를 이원 표기(†공표/‡자체 측정)하며, 보고가 없는 셀은 공란 원칙을 따른다.
+
+#### [평가 메트릭]
+- **추론 정확도 (Accuracy):** 엄격한 정답 일치율(Exact Match) 및 수치 추출 매칭.
+- **추론 지연시간 (Latency & FLOPs):** 생성 완료까지의 경과 시간(ms/sample) 및 총 연산량.
+- **방출 토큰 수 및 수렴 사이클 ($M$ distribution):** 문제 난이도별 평균 방출 토큰 수.
+- **Anytime Accuracy Curve:** 수렴 이전 중간 단계 $m$에서의 조기 중단 정답률.
+
+---
+
+## 7. 절제 실험 및 메커니즘 분석 계획 (Ablation & Analysis)
+
+```
+[Ablation Grid]
+A. 방출 구조     : Single Vector (v1) vs Fixed K Tokens vs Dynamic M Rollout (v2)
+B. 백본 적응     : Full Freeze vs LoRA Alignment (v2)          [Full FT 제외]
+C. 커리큘럼 방식 : Cold Start (Stage 3 direct) vs Front-to-Back (v2 기본) vs Back-to-Front (탐색)
+D. 수렴 임계치   : ε 스윕 (0.01 ~ 0.20) -> Test-time compute scaling curve
+E. 마킹 항목     : LoRA 적용 패스(인코딩+디코딩 vs 디코딩만), VarReg 초기 구간(⌈M/4⌉) 유무·비율
+```
+
+### 7.1 주요 절제 실험 (Ablation Studies)
+
+1. **사고 토큰 방출 구조의 영향 (Dynamic $M$ vs Single $h_{\text{fusion}}$ vs Fixed $K$)**
+   - **가설:** 단일 벡터 압축은 3-hop 이상의 다중 홉에서 급격한 성능 저하를 보일 것이며, 수렴 기반 동적 $M$ 방출이 고정 $K$개 토큰 대비 파레토 효율(정확도 대비 지연)에서 우위를 보일 것이다.
+2. **백본 적응 전략 비교 (Frozen vs LoRA)**
+   - **가설:** 완전 동결 백본은 연속 잠재 토큰 시퀀스의 수용에 한계를 보이고, LoRA는 소량의 파라미터로 유의한 정렬 이득을 달성할 것이다. (연속 입력에 대한 백본 적응의 필요성 자체를 판정하는 실험 — 논증 ⑦의 검증.)
+3. **커리큘럼 순서의 영향 (Front-to-Back vs Back-to-Front vs Cold Start)**
+   - **가설:** Coconut과 정합하는 Front-to-Back 커리큘럼이 콜드 스타트 대비 학습 안정성과 최종 정확도에서 우위를 보일 것이다. Back-to-Front는 대안 가설로서 탐색적으로 비교한다(방향 효과는 경험 문제로 취급).
+4. **수렴 임계값 $\varepsilon$에 따른 Compute-Accuracy Trade-off**
+   - $\varepsilon$을 조절하여 평균 $M$을 2에서 10까지 스윕할 때 나타나는 정확도 곡선을 통해 모델의 내부 Test-Time Compute Scaling 특성을 정량화한다.
+
+### 7.2 메커니즘 분석 (Deep Mechanistic Analysis)
+
+- **ProsQA 홉 수 vs 수렴 스텝 $M$ 상관분석:**
+  - 1-hop ~ 5-hop 문제 집합에 대해 모델이 자율적으로 선택한 $M$의 분포를 히스토그램으로 시각화.
+  - "문제가 복잡할수록 모델이 자율적으로 더 많은 사고 토큰을 생성한다"는 명제를 실증.
+- **Logit-Lens를 통한 잠재 궤적 $\mathcal{H}_{\text{thought}}$ 시각화:**
+  - $h^{(1)}, h^{(2)}, \dots, h^{(M)}$을 언어 모델 헤드($W_{\text{vocab}}$)에 직접 투영하여 상위 확률 단어를 디코딩.
+  - 1스텝에서는 문제의 핵심 엔티티가 부각되고, $M$스텝으로 갈수록 중간 추론 연산 결과가 언어적으로 선명화되는 과정을 확인.
+
+---
+
+## 8. 관련 연구 대비 정밀 비교 (Comparative Analysis)
+
+| 비교 축 | Coconut (Meta/UCSD, 2024) | Pause Tokens (Goyal et al., 2023) | LSRR v1 (이전 제안) | **LSRR-v2 (본 제안)** |
+|---|---|---|---|---|
+| **사고 공간** | 연속 은닉 상태 | 더미 이산 토큰 (`<pause>`) | 레이어 상태 $H$ | **레이어 상태 $H$의 궤적 전개** |
+| **사고 1스텝 연산 비용** | **트랜스포머 전체 1회 순전파**<br>(극도로 무거움) | 트랜스포머 전체 1회 순전파 | 경량 양방향 SSM 스캔<br>(초경량) | **경량 양방향 SSM 스캔**<br>(초경량) |
+| **사고 스텝 수 결정** | 고정 길이 $k$ (수동 지정) | 고정 또는 별도 종료 헤드 | 수렴 판정 $\Delta < \varepsilon$ | **수렴 판정 $\Delta < \varepsilon$ 기반 자율 결정** |
+| **방출 표현 형태** | $k$개의 토큰 시퀀스 | $k$개의 정적 토큰 | **단일 벡터 $h_{\text{fusion}}$ ($K=1$)**<br>(정보 병목 존재) | **동적 $M$개 잠재 사고 토큰 시퀀스**<br>$\mathcal{H}_{\text{thought}} = [h^{(1)}, \dots, h^{(M)}]$ |
+| **백본 학습 전략** | Full Fine-tuning | Full Fine-tuning 또는 사전학습 | 100% 완전 동결 (No LoRA) | **경량 LoRA 매니폴드 정렬**<br>(사전학습 보존 + 수용체 형성) |
+| **학습 커리큘럼** | CoT 앞 단계부터 잠재화 (순차) | 단순 마스킹 / 사전학습 | End-to-End 직접 학습 | **Front-to-Back CoT 잠재화 + 스텝 $M$ 확장** |
+| **학습 병렬성** | **완전 상실 (순차 순전파 강제)** | 병렬 가능 | 병렬 보존 | **병렬 보존 (트랜스포머 1회 + SSM 스캔)** |
+
+---
+
+## 9. 기대 효과 및 연구 기여도 (Expected Impacts)
+
+1. **아키텍처 혁신:**
+   트랜스포머를 반복 호출하는 기존 연속 사고 모델의 연산 비효율을 해소하고, 경량 SSM의 동적 수렴 횟수와 백본의 사고 토큰 시퀀스 길이를 1:1로 직결시킨 최초의 **Dynamic Trajectory Rollout 아키텍처**를 정립한다.
+2. **정보 병목과 표현 단절의 동시 해결:**
+   단일 벡터 압축으로 인한 $k$-hop 추론의 한계를 다중 토큰 궤적 방출로 극복하고, LoRA를 통해 연속 잠재 공간과 이산 언어 디코딩 매니폴드를 매끄럽게 결합한다.
+3. **학습 효율 및 일반화 극대화:**
+   Coconut의 핵심 장점인 '단계적 CoT 잠재화 커리큘럼'을 계승하여 콜드 스타트 최적화 실패를 방지하면서도, Coconut이 지닌 치명적 단점(학습 병렬성 상실, 무거운 트랜스포머 반복 순전파)을 제거한다.
+4. **Test-Time Compute Scaling의 이론적 실체화:**
+   수렴 임계값 $\varepsilon$ 하나로 추론 연산량과 방출 토큰 길이를 자유자재로 제어하는 유연한 추론 엔진을 완성한다.

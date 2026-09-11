@@ -44,11 +44,36 @@ def test_state_delta_is_per_sample():
 
 
 def test_state_delta_matches_proposal_formula():
-    """Δ = (1/L) Σ_l ‖r_l' − r_l‖₂"""
+    """v2.1 §4.3: Δ = 1/(L·d_ssm) Σ_l ‖r_l' − r_l‖₁ — 전 원소 평균 절대 변화량."""
     R = torch.zeros(1, 3, 4)
     R_next = torch.zeros(1, 3, 4)
-    R_next[0, 0, 0] = 3.0  # 한 레이어만 노름 3
-    assert float(state_delta(R, R_next)[0]) == pytest.approx(1.0)
+    R_next[0, 0, 0] = 3.0
+    # L·d = 12, 절대 변화 총합 3.0 → 0.25
+    assert float(state_delta(R, R_next)[0]) == pytest.approx(3.0 / 12)
+
+
+def test_state_delta_is_invariant_to_width():
+    """L1/(L·d) 는 폭에 불변이다 — ε 을 d_ssm 마다 재보정할 필요가 줄어든다.
+
+    v1 의 (1/L)Σ‖·‖₂ 는 같은 원소별 변화량에도 d 가 커지면 √d 로 부풀었다.
+    """
+    vals = []
+    for d in (4, 16, 64):
+        R = torch.zeros(1, 3, d)
+        R_next = torch.full((1, 3, d), 0.1)
+        vals.append(float(state_delta(R, R_next)[0]))
+    assert all(v == pytest.approx(0.1) for v in vals), vals
+
+
+def test_state_delta_differs_from_the_v1_definition():
+    """v1 의 ε 을 그대로 쓰면 안 된다 (FINDINGS F-024)."""
+    torch.manual_seed(0)
+    R = torch.randn(2, 12, 256)
+    R_next = R + torch.randn_like(R) * 0.01
+    v2 = state_delta(R, R_next)
+    v1 = (R_next - R).norm(p=2, dim=-1).mean(dim=-1)   # 구 정의
+    assert not torch.allclose(v1, v2, rtol=0.1)
+    assert (v1 > v2 * 5).all(), "구 정의가 훨씬 큰 값을 낸다"
 
 
 def test_relative_delta_normalises_by_state_norm():
@@ -183,3 +208,76 @@ def test_diagnostics_carry_all_signals():
     )
     assert diag.m == 0 and diag.kl_div == pytest.approx(0.3)
     assert diag.entropy == pytest.approx(2.0)
+
+
+# ---------------------------------------------------------------- M_min (v2.1 §4.3)
+
+def test_m_min_blocks_early_stopping():
+    """M = min{m ∈ {M_min..M_max} | Δ<ε} — 하한 이전에는 규칙이 만족해도 멈추지 않는다."""
+    from lsrr.termination.rules import DeltaStateRule
+
+    rule = DeltaStateRule(eps=1e9, m_max=8, m_min=3)  # eps 가 커서 항상 만족
+    rule.reset(2, torch.device("cpu"))
+    sig = lambda: TerminationSignals(delta_state=torch.zeros(2))
+
+    for m in range(2):  # m+1 = 1, 2 < m_min=3
+        stopped, _ = rule.should_stop(sig(), m)
+        assert not stopped.any(), f"m={m} 에서 하한을 무시하고 멈췄다"
+
+    stopped, _ = rule.should_stop(sig(), 2)  # m+1 = 3 == m_min
+    assert stopped.all()
+
+
+def test_m_max_fallback_beats_m_min():
+    """하한과 상한이 충돌하면 상한이 이긴다 (I5 는 우회 불가)."""
+    from lsrr.termination.rules import DeltaStateRule
+
+    rule = DeltaStateRule(eps=0.0, m_max=3, m_min=3)  # eps=0 이라 규칙은 절대 불만족
+    rule.reset(2, torch.device("cpu"))
+    for m in range(2):
+        stopped, _ = rule.should_stop(
+            TerminationSignals(delta_state=torch.ones(2)), m
+        )
+        assert not stopped.any()
+    stopped, _ = rule.should_stop(TerminationSignals(delta_state=torch.ones(2)), 2)
+    assert stopped.all(), "m_max 폴백이 걸려야 한다"
+
+
+def test_m_min_defaults_to_one():
+    """기본값은 v1 거동과 같다 — 하한을 쓰지 않는 설정이 바뀌지 않는다."""
+    from lsrr.termination.rules import DeltaStateRule
+
+    assert DeltaStateRule(eps=1e-3, m_max=8).m_min == 1
+
+
+def test_impossible_m_min_is_fatal():
+    from lsrr.termination.rules import DeltaStateRule
+
+    with pytest.raises(ValueError, match="m_min"):
+        DeltaStateRule(eps=1e-3, m_max=4, m_min=5)
+    with pytest.raises(ValueError, match="m_min"):
+        DeltaStateRule(eps=1e-3, m_max=4, m_min=0)
+
+
+def test_m_min_applies_to_every_rule():
+    """하한도 기반 클래스가 소유하므로 규칙마다 다시 구현하지 않는다."""
+    from lsrr.termination.rules import (
+        DeltaStateRule,
+        EntropyOutputRule,
+        FixedMRule,
+        KLOutputRule,
+    )
+
+    for cls, kw in (
+        (DeltaStateRule, {"eps": 1e9}),
+        (KLOutputRule, {"eps": 1e9}),
+        (EntropyOutputRule, {"eps": 1e9}),
+        (FixedMRule, {"m": 1}),
+    ):
+        rule = cls(m_max=8, m_min=3, **kw)
+        rule.reset(1, torch.device("cpu"))
+        sig = TerminationSignals(
+            delta_state=torch.zeros(1), kl_div=torch.zeros(1), entropy=torch.zeros(1)
+        )
+        stopped, _ = rule.should_stop(sig, 0)
+        assert not stopped.any(), f"{cls.__name__} 이 하한을 무시했다"

@@ -84,8 +84,13 @@ class CycleRunner(BaseCycleRunner):
         for m in range(M):
             R = detach_if_needed(R, window, m)
             R_next = self.engine.forward_step(R, R0, m)
+            per_sample = state_delta(R, R_next).detach()
             diag = CycleDiagnostics(
-                m=m, delta_state=float(state_delta(R, R_next).detach().mean())
+                m=m,
+                delta_state=float(per_sample.mean()),
+                # 거동 분류(게이트 ④)는 샘플별 궤적을 요구한다. 배치 평균만
+                # 남기면 "문제 난이도에 따른 적응적 계산"을 사후에 볼 수 없다.
+                extra={"per_sample_delta": per_sample.cpu().tolist()},
             )
             trace.per_cycle.append(diag)
             self._dispatch(hooks, m, R, R_next, diag)

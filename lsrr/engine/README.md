@@ -15,12 +15,17 @@ $$R^{(m+1)} = (1-\alpha)\,R^{(m)} + \alpha\,S_\phi(R^{(m)}, R^{(0)}, m)$$
 
 | 모듈 | 역할 | 상태 |
 |---|---|---|
-| `wrapper.py` | `EngineWrapper` — **위 갱신식의 유일한 소유자**. 감쇠·재주입·사이클 임베딩·pre-norm. 모든 코어를 감싼다 | 계획 |
-| `core_hydra.py` | quasiseparable 양방향 스캔 (Hydra) — **기본 구현** | 계획 |
-| `core_mamba.py` | `mamba_up`(하→상) / `mamba_down`(상→하) / `bidir_add`(휴리스틱 양방향) | 계획 |
-| `core_attention.py` | 동FLOPs 어텐션 블록 — 내부 베이스라인 | 계획 |
-| `core_mlp.py` | 1회 통과 MLP — Phase 0 게이트 ③의 비교 대상 | 계획 |
-| `budget.py` | 파라미터·FLOPs 예산 정합 (5% 이내) | 계획 |
+| `wrapper.py` | `EngineWrapper` — **위 갱신식의 유일한 소유자**. 감쇠·재주입·사이클 임베딩·pre-norm. 모든 코어를 감싼다 | 검증 |
+| `scan.py` | 선택적 스캔 프리미티브와 quasiseparable shift — SSM 계열 코어의 공용 부품 | 검증 |
+| `core_hydra.py` | quasiseparable 양방향 스캔 (Hydra) — **기본 구현** | 검증 |
+| `core_mamba.py` | `mamba_up`(하→상) / `mamba_down`(상→하) / `bidir_add`(휴리스틱 양방향) | 검증 |
+| `core_attention.py` | 동예산 어텐션 블록 — 내부 베이스라인 | 검증 |
+| `core_mlp.py` | 1회 통과 MLP — Phase 0 게이트 ③의 비교 대상 | 검증 |
+| `budget.py` | 파라미터 예산 정합 (5% 이내) | 검증 |
+
+> `scan.py`는 원래 계획에 없던 모듈이다. `core_hydra`와 `core_mamba`가 같은 스캔을
+> 쓰는데, 코어끼리 import하면 Ablation C의 비교 대상들이 서로 의존하게 되므로
+> 공용 부품으로 분리했다. 레거시 `ssm_core.py`의 이식이다.
 
 ## 핵심 계약
 
@@ -49,4 +54,9 @@ EngineWrapper.forward_step(R_m, R0, m) -> R_next   # [B, L, d_model] 유지
 - `Legacy_LSRR/tests/{test_hydra_quasiseparable,test_engine_equiv,test_param_matching}.py` — HydraQS 순방향 분기가 Mamba-Up과 수치적으로 같아야 한다는 검사는 quasiseparable 구현의 정확성 근거다. 반드시 함께 이식한다.
 
 ## 상태
-**검증(부분)** — `wrapper.py`·`core_mlp.py` 완료 (M3). Hydra/Mamba/Attention 코어와 `budget.py`는 M4.
+**검증** — 전 모듈 완료 (M4). Ablation C 스윕의 6개 엔진이 모두 등록되어 있고
+(`hydra_qs`·`mamba_up`·`mamba_down`·`bidir_add`·`attn_block`·`mlp_onepass`),
+이식 충실도는 `tests/unit/test_hydra_port_fidelity.py`가 고정한다.
+
+FLOPs 정합은 아직 파라미터 정합만 구현되어 있다 — 어텐션의 이차 항은 L=12에서
+파라미터 항에 묻히지만, 스케일 확장(M8) 시 `budget.py`에 FLOPs 축을 추가해야 한다.

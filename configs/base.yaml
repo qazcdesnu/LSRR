@@ -23,7 +23,7 @@ engine:
   type: hydra_qs        # quasiseparable 양방향 (제안서 §4.2)
   d_state: 16
   n_blocks: 2
-  damping_alpha: 0.5    # 감쇠 갱신 (Ablation D)
+  damping_alpha: 0.8    # 감쇠 갱신 (v2.1 §4.2, Ablation D의 스윕 축)
   reinject_r0: gate     # R⁰ 재주입
   cycle_embedding: true # 사이클 임베딩
 
@@ -39,7 +39,11 @@ recurrence:
 
 termination:
   type: delta_state     # Δ<ε (Ablation B의 기준 조건)
-  eps: 1.0e-3
+  # Δ = 1/(L·d_ssm) Σ_l ‖·‖₁ 스케일 기준 (v2.1 §4.3). v1의 (1/L)Σ‖·‖₂ 와는
+  # 값이 10~35배 다르므로 v1의 ε=1e-3 을 그대로 쓰면 안 된다 (F-024).
+  # v2.1 §7-D 의 ε 스윕 범위가 0.01~0.20 이다.
+  eps: 0.05
+  m_min: 1              # 정지 하한 (v2.1 §4.3). 커리큘럼이 예산을 강제할 때 올린다
   m_max: 32             # 폴백 필수 (I5)
 
 stability:
@@ -48,8 +52,14 @@ stability:
 readout:
   fusion:
     type: attention_pooling
-    fusion_type: residual   # h_fusion = h_ctx + W_r·h_SSM
-    w_r_init_scale: 0.01    # 작게 시작 → 학습 초기에 백본 원래 동작에서 출발
+    # 방출 공식 (v2.1 §4.4 개정): h⁽ᵐ⁾ = s·RMSNorm(W_proj·h_ssm⁽ᵐ⁾)
+    #   anchor=none  잔차 앵커 h⁽ᴸ⁾ 없음 — v2 기본 (F-026)
+    #   anchor=ctx   v1 잔차 융합. **Ablation A 의 대조군이므로 보존한다**
+    #   anchor=ramp  σ(g)·보정 — 안정화 램프만. 보정 뒤에 걸린다
+    #   anchor=first 첫 토큰만 앵커
+    anchor: none
+    fusion_type: residual   # anchor=ctx 일 때 h_ctx 와 결합하는 방식
+    w_r_init_scale: 0.01    # 작게 시작 → 학습 초기에 사고 항이 점진적으로 켜짐
   path:
     type: backbone_continuation   # 학습 디코더 없음 (ADR-001)
     max_new_tokens: 32

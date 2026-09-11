@@ -64,6 +64,15 @@ class BackboneContinuation(BaseAnswerHead):
 
     # ------------------------------------------------------------ 내부
 
+    @staticmethod
+    def _as_trajectory(injected: torch.Tensor) -> torch.Tensor:
+        """`[B, d]` → `[B, 1, d]`, `[B, M, d]` → 그대로.
+
+        v1 단일 벡터를 M=1 궤적의 특수 경우로 흡수한다 (ADR-015) — 두 경로를
+        따로 두면 Ablation A 의 조건들이 서로 다른 코드를 타게 된다.
+        """
+        return injected.unsqueeze(1) if injected.dim() == 2 else injected
+
     def _embed(self, ids: torch.Tensor) -> torch.Tensor:
         return self.model.get_input_embeddings()(ids)
 
@@ -108,7 +117,7 @@ class BackboneContinuation(BaseAnswerHead):
 
     def teacher_forced(
         self,
-        h_fusion: torch.Tensor,
+        injected: torch.Tensor,
         kv_cache: Any,
         answer_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
@@ -116,12 +125,13 @@ class BackboneContinuation(BaseAnswerHead):
     ) -> torch.Tensor:
         """teacher-forcing 로짓.
 
-        입력 구성: [h_fusion] + embed(answer[:-1]) → T_a 위치.
-        위치 t의 로짓이 answer_ids[:, t]를 예측하므로 라벨과 그대로 정렬된다
-        (별도의 shift 불필요).
+        입력 구성: `[h⁽¹⁾ … h⁽ᴹ⁾] + embed(answer[:-1])`. 마지막 잠재 토큰 위치의
+        로짓이 `answer_ids[:, 0]`을 예측하므로, **앞쪽 M−1 개 위치를 잘라내면**
+        라벨과 그대로 정렬된다 (별도의 shift 불필요).
 
         Args:
-            h_fusion: [B, d_in] 주입 벡터. 백본 입력 임베딩 공간이어야 한다 (I8).
+            injected: `[B, d_in]` 또는 `[B, M, d_in]`. 백본 입력 임베딩 공간이어야
+                한다 (I8). M 개 궤적은 v2.1 §4.4.
             kv_cache: 질문 구간 KV. 호출 후 질문 길이로 되감긴다.
             answer_ids: [B, T_a]
             attention_mask: [B, T_q] 질문 마스크
@@ -130,14 +140,16 @@ class BackboneContinuation(BaseAnswerHead):
         Returns:
             logits [B, T_a, V]
         """
-        assert_injection_space(h_fusion, self.d_in)
+        assert_injection_space(injected, self.d_in)
         if attention_mask is None:
             raise AssemblyError("연속 디코딩에는 질문 attention_mask가 필요하다.")
         if q_len is None:
             q_len = attention_mask.sum(dim=1)
 
         base_len = _cache_length(kv_cache)
-        inject = h_fusion.unsqueeze(1).to(dtype=self._embed(answer_ids[:, :1]).dtype)
+        traj = self._as_trajectory(injected)
+        M = traj.shape[1]
+        inject = traj.to(dtype=self._embed(answer_ids[:, :1]).dtype)
         if answer_ids.shape[1] > 1:
             inputs = torch.cat([inject, self._embed(answer_ids[:, :-1])], dim=1)
         else:
@@ -145,12 +157,14 @@ class BackboneContinuation(BaseAnswerHead):
 
         out = self._forward(inputs, kv_cache, attention_mask, q_len, offset=0)
         rewind_cache(kv_cache, base_len)
-        return out.logits
+        # 앞선 M−1 개 잠재 위치는 답 토큰을 예측하지 않는다 — 잘라내야 라벨과
+        # 정렬된다. M=1 이면 무연산이라 v1 경로와 동일하다.
+        return out.logits[:, M - 1 :] if M > 1 else out.logits
 
     @torch.no_grad()
     def generate(
         self,
-        h_fusion: torch.Tensor,
+        injected: torch.Tensor,
         kv_cache: Any,
         max_new_tokens: int = 32,
         eos_token_id: Optional[int] = None,
@@ -159,10 +173,13 @@ class BackboneContinuation(BaseAnswerHead):
     ) -> torch.Tensor:
         """탐욕적 자기회귀 생성 → [B, T_gen].
 
-        비용은 [1 위치 + 생성 길이]의 incremental forward뿐이다 — 질문 KV를
+        비용은 `[M 위치 + 생성 길이]`의 incremental forward뿐이다 — 질문 KV를
         재사용하므로 질문을 다시 읽지 않는다 (제안서 §4.4).
+
+        **M 개 잠재 토큰은 한 번에 넣는다.** 서로 의존하지 않으므로 한 스텝으로
+        족하고, 이 덕분에 궤적 길이가 늘어도 순차 스텝 수는 그대로다.
         """
-        assert_injection_space(h_fusion, self.d_in)
+        assert_injection_space(injected, self.d_in)
         if attention_mask is None:
             raise AssemblyError("연속 디코딩에는 질문 attention_mask가 필요하다.")
         if q_len is None:
@@ -171,16 +188,21 @@ class BackboneContinuation(BaseAnswerHead):
         eos = eos_token_id if eos_token_id is not None else self.eos_token_id
         pad = self.pad_token_id if self.pad_token_id is not None else (eos or 0)
 
-        B = h_fusion.shape[0]
-        device = h_fusion.device
+        traj = self._as_trajectory(injected)
+        B, M = traj.shape[0], traj.shape[1]
+        device = traj.device
         base_len = _cache_length(kv_cache)
 
-        step_input = h_fusion.unsqueeze(1)
+        step_input = traj
         tokens: list[torch.Tensor] = []
         finished = torch.zeros(B, dtype=torch.bool, device=device)
+        offset = 0
 
-        for step in range(max_new_tokens):
-            out = self._forward(step_input, kv_cache, attention_mask, q_len, offset=step)
+        for _ in range(max_new_tokens):
+            out = self._forward(
+                step_input, kv_cache, attention_mask, q_len, offset=offset
+            )
+            offset += step_input.shape[1]
             nxt = out.logits[:, -1].argmax(dim=-1)
             nxt = torch.where(finished, torch.full_like(nxt, pad), nxt)
             tokens.append(nxt)

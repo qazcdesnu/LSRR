@@ -26,9 +26,29 @@ def test_adapter_space_width_rejected():
         assert_injection_space(torch.zeros(4, 256), d_in=768)
 
 
+def test_trajectory_of_correct_width_passes():
+    """v2.1 §4.4: M개 잠재 사고 토큰 — 모든 토큰이 백본 공간에 있어야 한다 (ADR-015)."""
+    for M in (1, 3, 8):
+        assert_injection_space(torch.zeros(4, M, 768), d_in=768)
+
+
+def test_trajectory_of_wrong_width_rejected():
+    with pytest.raises(InjectionSpaceError, match="ADR-003"):
+        assert_injection_space(torch.zeros(4, 3, 256), d_in=768)
+
+
 def test_wrong_rank_rejected():
-    with pytest.raises(InjectionSpaceError, match="2차원"):
-        assert_injection_space(torch.zeros(4, 12, 768), d_in=768)
+    """[B, d] 와 [B, M, d] 만 허용한다."""
+    with pytest.raises(InjectionSpaceError, match="d_in"):
+        assert_injection_space(torch.zeros(768), d_in=768)
+    with pytest.raises(InjectionSpaceError, match="d_in"):
+        assert_injection_space(torch.zeros(2, 4, 12, 768), d_in=768)
+
+
+def test_empty_trajectory_rejected():
+    """M_min ≥ 1 — 아무것도 방출하지 않으면 백본이 읽을 것이 없다."""
+    with pytest.raises(InjectionSpaceError, match="비어 있다"):
+        assert_injection_space(torch.zeros(4, 0, 768), d_in=768)
 
 
 def test_model_readout_lands_in_backbone_space(dummy_model, dummy_batch):

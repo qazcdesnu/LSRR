@@ -15,6 +15,7 @@ dependencies = [
     "pandas",
     "tabulate",
     "tqdm",
+    "peft>=0.20.0",
 ]
 
 [project.optional-dependencies]

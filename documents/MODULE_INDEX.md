@@ -3,7 +3,7 @@
 > **이 문서는 코드베이스의 현재 상태판이다.** 모듈을 추가·삭제·이동하거나 상태가 바뀌면 해당 폴더 `README.md`와 **이 표를 함께** 갱신한다 (`CONVENTIONS.md` §5).
 > 상태: `계획` · `구현중` · `구현`(동작함) · `검증`(테스트 통과)
 
-**최종 갱신:** 2026-09-10 · 전체 상태: **M3 완료 — 최소 학습 루프 작동 (테스트 204종 통과)**
+**최종 갱신:** 2026-09-11 · 전체 상태: **M5 완료 — 감독과 진단, Phase 0 게이트 판정기 (테스트 287종 통과)**
 
 > 이 표의 `상태` 열은 **`Legacy_LSRR` 폐기 게이트의 판정 근거**이기도 하다 (`LEGACY_MAP.md` §4). 이식/개작 항목이 전부 `검증`이 되기 전에는 레거시를 지울 수 없다.
 
@@ -89,11 +89,12 @@
 | 모듈 | 역할 | 상태 |
 |---|---|---|
 | `wrapper.py` | §4.2 갱신식 소유: 감쇠·R⁰ 재주입·사이클 임베딩·pre-norm — **Ablation D** | 검증 |
-| `core_hydra.py` | quasiseparable 양방향 스캔 (기본) | 계획 |
-| `core_mamba.py` | 단방향 상향/하향, 휴리스틱 양방향 — **Ablation C** | 계획 |
-| `core_attention.py` | 동FLOPs 어텐션 블록 (내부 베이스라인) | 계획 |
+| `scan.py` | 선택적 스캔 프리미티브 + quasiseparable shift (SSM 코어 공용) | 검증 |
+| `core_hydra.py` | quasiseparable 양방향 스캔 (기본) | 검증 |
+| `core_mamba.py` | 단방향 상향/하향, 휴리스틱 양방향 — **Ablation C** | 검증 |
+| `core_attention.py` | 동예산 어텐션 블록 (내부 베이스라인) | 검증 |
 | `core_mlp.py` | 1회 통과 MLP (Phase 0 게이트 ③ 비교 대상) | 검증 |
-| `budget.py` | 파라미터·FLOPs 예산 정합 (비교 공정성, ADR-009) | 계획 |
+| `budget.py` | 파라미터 예산 정합 (비교 공정성, ADR-009). FLOPs 축은 M8 | 검증 |
 
 ## `lsrr/recurrence/` — 사이클 축 제어
 
@@ -113,7 +114,7 @@
 | `signals.py` | 신호 계산: 상태 Δ, 출력 KL, 엔트로피 | 검증 |
 | `rules.py` | `fixed_m` / `delta_state` / `kl_output` / `entropy_output` — **Ablation B** | 검증 |
 | `calibration.py` | ε 스윕·검증셋 임계값 선택 | 계획 |
-| `behavior.py` | 수렴 거동 분류 (수렴/진동/드리프트) — 층화 분석 | 계획 |
+| `behavior.py` | 수렴 거동 분류 (수렴/진동/드리프트) — **게이트 ④** | 검증 |
 
 ## `lsrr/readout/` — 공유 판독 경로
 
@@ -140,7 +141,7 @@
 |---|---|---|
 | `targets.py` | 정답 구간 마스킹, `IGNORE_INDEX` 규약 (I6) | 검증 |
 | `answer_nll.py` | `L_NLL` | 검증 |
-| `deep_supervision.py` | `L_DeepSup` — 답-앵커형, TBPTT 윈도 내, γ 가중 (ADR-006) | 계획 |
+| `deep_supervision.py` | `L_DeepSup` — 답-앵커형, TBPTT 윈도 내, γ 가중 (ADR-006) | 검증 |
 | `variance_reg.py` | `L_VarReg` — 상태 분산 하한 | 계획 |
 | `distillation.py` | `L_KD` — **ablation 전용** (JS 유계·stop-grad 교사·정답 조건부 가중) | 계획 |
 | `composite.py` | 가중 합성과 항별 지표 분리 보고 | 검증 |
@@ -179,11 +180,12 @@
 
 | 모듈 | 역할 | 상태 |
 |---|---|---|
-| `accuracy.py` | 최종답 exact match 프로토콜 | 계획 |
-| `anytime.py` | 사이클별 정확도 곡선 (§5 부산물) | 계획 |
-| `cost.py` | FLOPs·지연 회계 — 백본 1회 포함 (I7) | 계획 |
+| `accuracy.py` | 최종답 exact match 프로토콜 | 검증 |
+| `anytime.py` | 사이클별 정확도 곡선 (§5 부산물) — **게이트 ②** | 검증 |
+| `cost.py` | FLOPs·지연 회계 — 백본 1회 포함 (I7) | 검증 |
 | `pareto.py` | 정확도-연산/지연 프론티어 | 계획 |
-| `aggregate.py` | 시드 집계·신뢰구간 | 계획 |
+| `aggregate.py` | 시드 집계·신뢰구간·유의성 검정 — **게이트 ③** | 검증 |
+| `evaluate.py` | 평가 실행 → 게이트 판정 데이터 수집 (계획 외 추가) | 검증 |
 
 ## `lsrr/telemetry/` — 기록
 
@@ -199,7 +201,7 @@
 | 모듈 | 역할 | 상태 |
 |---|---|---|
 | `plugin.py` | 플러그인 프로토콜과 트레이스 러너 | 계획 |
-| `collapse.py` | 표현 동질화·자명해 진단 (게이트 ①) | 계획 |
+| `collapse.py` | 표현 동질화·자명해 진단 (게이트 ①) | 검증 |
 | `logit_lens.py` | 사이클별 `R⁽ᵐ⁾` 투영, 정제 궤적 | 계획 |
 | `alpha_profile.py` | α_l 분포 (중간층 집중 가설) | 계획 |
 | `hop_convergence.py` | 홉 수 ↔ 평균 수렴 사이클 | 계획 |
@@ -217,9 +219,9 @@
 
 | 모듈 | 역할 | 상태 |
 |---|---|---|
-| `criteria.py` | 게이트 술어 (유의성 검정 포함) | 계획 |
-| `definitions.py` | Phase별 게이트 집합 정의 | 계획 |
-| `report.py` | PASS/FAIL 판정문 + 킬 스위치 신호 | 계획 |
+| `criteria.py` | 게이트 술어 (유의성 검정 포함) | 검증 |
+| `definitions.py` | Phase별 게이트 집합 정의와 임계값 | 검증 |
+| `report.py` | PASS/FAIL 판정문 + 킬 스위치 신호 | 검증 |
 
 ## `scripts/` — CLI 진입점
 
@@ -227,12 +229,13 @@
 |---|---|---|
 | `download_data.py` | 데이터 획득·검증 | 계획 |
 | `extract_h.py` | H 캐시 사전 추출 (보조 경로) | 계획 |
-| `train.py` | 학습 | 검증 |
-| `eval.py` | 평가·종료 규칙 스윕 | 계획 |
-| `sweep.py` | 그리드 스윕 | 계획 |
+| `train.py` | 학습. `--runs-dir` 플래그, `RUN_DIR=` 기계 판독 출력 | 검증 |
+| `eval.py` | 평가 → `metrics.json`·`gate_inputs.json`. 종료 규칙 스윕은 M6 | 검증 |
+| `sweep.py` | 조건 × 시드 스윕 → train+eval 연쇄. 판정은 하지 않는다 | 검증 |
 | `eval_backbone_direct.py` | No-CoT 백본 직접 평가 (하한) | 계획 |
 | `profile_cost.py` | FLOPs·지연 프로파일 | 계획 |
 | `analyze.py` | 분석 플러그인 실행 | 계획 |
 | `diagnose_injection.py` | **주입 통로 진단** — 개입 비교로 질문별 학습을 판정 (F-010) | 검증 |
-| `check_gates.py` | 단계 게이트 판정 | 계획 |
+| `diagnose_trajectory.py` | **궤적 분화 진단** — ADR-015 선행 관문. 토큰 분화 + 토큰별 기여 (F-026) | 검증 |
+| `check_gates.py` | 단계 게이트 판정 | 검증 |
 | `make_report.py` | 표·그림 생성 | 계획 |

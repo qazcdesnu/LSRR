@@ -15,9 +15,17 @@ import torch.nn.functional as F
 
 
 def state_delta(R_m: torch.Tensor, R_next: torch.Tensor) -> torch.Tensor:
-    """제안서 §4.3의 Δ⁽ᵐ⁾ — 샘플별로 계산한다.
+    """제안서 v2.1 §4.3의 Δ⁽ᵐ⁾ — 샘플별로 계산한다.
 
-        Δ⁽ᵐ⁾ = (1/L) Σ_l ‖ r_l⁽ᵐ⁺¹⁾ − r_l⁽ᵐ⁾ ‖₂
+        Δ⁽ᵐ⁾ = 1/(L·d_ssm) Σ_l ‖ r_l⁽ᵐ⁺¹⁾ − r_l⁽ᵐ⁾ ‖₁
+
+    즉 **전 원소의 평균 절대 변화량**이다. L1 을 L·d 로 나누므로 레이어 수와
+    폭에 무관한 스케일이 되고, ε 을 백본·`d_ssm` 을 바꿔 가며 재보정할 필요가
+    줄어든다. v2.1 §7-D 의 ε 스윕 범위(0.01~0.20)가 이 스케일 기준이다.
+
+    **v1 과 값이 다르다.** v1 은 `(1/L) Σ_l ‖·‖₂` 였다. L2 는 차원 수에 따라
+    커지고 L 로만 나누므로 `d_ssm` 에 비례해 부풀었다. v1 설정의 ε=1e-3 을
+    그대로 쓰면 안 된다 (ADR-015 관련, FINDINGS F-024).
 
     Args:
         R_m, R_next: [B, L, d]
@@ -26,7 +34,7 @@ def state_delta(R_m: torch.Tensor, R_next: torch.Tensor) -> torch.Tensor:
         [B] — 배치 평균이 아니라 샘플별 값. 배치 평균으로 정지를 결정하면
         "문제 난이도에 따른 적응적 계산"이라는 주장이 성립하지 않는다.
     """
-    return (R_next - R_m).norm(p=2, dim=-1).mean(dim=-1)
+    return (R_next - R_m).abs().mean(dim=(-2, -1))
 
 
 def output_kl(
@@ -64,7 +72,7 @@ def relative_delta(
     절대 Δ의 임계값 ε은 백본·d_model에 따라 스케일이 달라진다. 상대 Δ는
     그 의존을 줄이므로 백본을 바꿔 가며 같은 ε을 쓰고 싶을 때 쓴다.
     """
-    scale = R_m.norm(p=2, dim=-1).mean(dim=-1).clamp(min=eps)
+    scale = R_m.abs().mean(dim=(-2, -1)).clamp(min=eps)
     return state_delta(R_m, R_next) / scale
 
 

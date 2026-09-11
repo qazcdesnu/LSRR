@@ -215,21 +215,31 @@ def assert_cost_includes_backbone(report: Any) -> None:
 # ------------------------------------------------------------------ I8
 
 
-def assert_injection_space(h_fusion: torch.Tensor, d_in: int) -> None:
-    """h_fusion이 백본 입력 임베딩 공간의 벡터인지 확인한다 (I8).
+def assert_injection_space(injected: torch.Tensor, d_in: int) -> None:
+    """주입 벡터가 백본 입력 임베딩 공간에 있는지 확인한다 (I8).
+
+    `[B, d_in]` 단일 벡터와 `[B, M, d_in]` 궤적 시퀀스를 모두 받는다 —
+    v2.1 §4.4 는 M 개 잠재 사고 토큰을 방출하며, **그 모든 토큰**이 이 공간에
+    있어야 한다 (ADR-015).
 
     어댑터 출력은 레이어 축 정렬을 위해 학습된 별개 공간이며, 이를 주입하면
     매니폴드 불일치가 발생한다 — 제안서 §9가 "원천 차단"을 기여로 내건 실패 양식이다.
     """
-    if h_fusion.dim() != 2:
+    if injected.dim() not in (2, 3):
         raise InjectionSpaceError(
-            f"h_fusion은 [B, d_in] 2차원이어야 하는데 {tuple(h_fusion.shape)}이다."
+            f"주입 벡터는 [B, d_in] 또는 [B, M, d_in]이어야 하는데 "
+            f"{tuple(injected.shape)}이다."
         )
-    if h_fusion.shape[-1] != d_in:
+    if injected.shape[-1] != d_in:
         raise InjectionSpaceError(
-            f"h_fusion의 폭이 {h_fusion.shape[-1]}인데 백본 입력 임베딩 폭은 "
+            f"주입 벡터의 폭이 {injected.shape[-1]}인데 백본 입력 임베딩 폭은 "
             f"{d_in}이다. 융합 잔차 앵커는 어댑터 통과 전 백본 원본 h^(L)이어야 "
             f"하고 W_r의 출력 폭은 d_in이어야 한다 (ADR-003)."
+        )
+    if injected.dim() == 3 and injected.shape[1] < 1:
+        raise InjectionSpaceError(
+            f"궤적이 비어 있다: {tuple(injected.shape)}. 최소 1개 토큰을 방출해야 "
+            f"한다 (M_min ≥ 1)."
         )
 
 
