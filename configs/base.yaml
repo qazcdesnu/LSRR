@@ -52,12 +52,15 @@ stability:
 readout:
   fusion:
     type: attention_pooling
-    # 방출 공식 (v2.1 §4.4 개정): h⁽ᵐ⁾ = s·RMSNorm(W_proj·h_ssm⁽ᵐ⁾)
-    #   anchor=none  잔차 앵커 h⁽ᴸ⁾ 없음 — v2 기본 (F-026)
+    # 방출 공식 (v2.1 §4.4 개정):
+    #   h⁽¹⁾ = s·RMSNorm(W_proj·h_ssm⁽¹⁾ + h⁽ᴸ⁾)
+    #   h⁽ᵐ⁾ = s·RMSNorm(W_proj·h_ssm⁽ᵐ⁾)          (m > 1)
+    #
+    #   anchor=first 첫 토큰만 앵커 — v2 기본 (F-027)
+    #   anchor=none  앵커 없음. 쉬운 과제에서 최선이나 통로가 늦게 열린다 (F-026)
     #   anchor=ctx   v1 잔차 융합. **Ablation A 의 대조군이므로 보존한다**
-    #   anchor=ramp  σ(g)·보정 — 안정화 램프만. 보정 뒤에 걸린다
-    #   anchor=first 첫 토큰만 앵커
-    anchor: none
+    #   anchor=ramp  σ(g)·보정 — 분화는 최고지만 거의 쓰이지 않는다
+    anchor: first
     fusion_type: residual   # anchor=ctx 일 때 h_ctx 와 결합하는 방식
     w_r_init_scale: 0.01    # 작게 시작 → 학습 초기에 사고 항이 점진적으로 켜짐
   path:

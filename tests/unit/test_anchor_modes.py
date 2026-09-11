@@ -55,9 +55,13 @@ def _emit(head: AttentionPoolingFusion, states, h_ctx) -> torch.Tensor:
 
 # ---------------------------------------------------------------- 기본값
 
-def test_default_is_no_anchor():
-    """v2 기본은 앵커 제거다 (F-026)."""
-    assert AttentionPoolingFusion(d_model=D_MODEL, d_out=D_IN).anchor == "none"
+def test_default_is_first_token_anchor():
+    """v2 기본은 첫 토큰 앵커다 (F-027).
+
+    1자리에서는 완전 제거가 최선이었으나(F-026), 2자리에서 통로가 늦게 열려
+    첫-토큰 조건에 밀렸다. 쉬운 과제 하나로 기본값을 정하면 안 된다는 사례다.
+    """
+    assert AttentionPoolingFusion(d_model=D_MODEL, d_out=D_IN).anchor == "first"
 
 
 def test_unknown_anchor_is_fatal():

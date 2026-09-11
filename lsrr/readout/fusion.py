@@ -38,10 +38,15 @@ FusionType = Literal["residual", "gate", "concat"]
 #: 임베딩 분포(노름 수 단위)와 동떨어져 있어 ② 의 명분이 실측과 맞지 않았다.
 #:
 #: 남는 ③ 은 상수 앵커 없이도 된다 — 토큰별 RMS 보정(ADR-013)과 W_r 초기화가
-#: 이미 제공하고, 부족하면 `ramp` 가 학습 게이트로 대체한다.
+#: 이미 제공한다.
 #:
-#: 그리고 앵커는 **모든 사이클에 같은 벡터를 더하는 공통 스탬프**이므로 방출
-#: 토큰의 분화를 원천에서 막는다 (F-025: `h⁽¹⁾` vs `h⁽⁵⁾` 코사인 1.0000).
+#: 그리고 앵커를 **모든** 사이클에 걸면 공통 스탬프가 되어 방출 토큰의 분화를
+#: 원천에서 막는다 (F-025: `h⁽¹⁾` vs `h⁽⁵⁾` 코사인 1.0000).
+#:
+#: **기본값은 `first` 다 (F-027).** 앵커를 전부 빼면 1자리처럼 쉬운 과제에서는
+#: 최선이지만(F-026), 2자리에서는 백본이 읽을 출발점이 없어 주입 통로가 늦게
+#: 열린다. 첫 토큰에만 두는 것이 두 과제 모두에서 셔플 개입 Δ 가 가장 크다
+#: (2자리 10k 기준 4.03 vs 없음 2.76 vs 모든토큰 0.0008).
 AnchorMode = Literal["ctx", "none", "ramp", "first"]
 
 
@@ -65,7 +70,7 @@ class AttentionPoolingFusion(BaseFusionHead):
         d_out: int = 768,
         fusion_type: FusionType = "residual",
         w_r_init_scale: float = 0.01,
-        anchor: AnchorMode = "none",
+        anchor: AnchorMode = "first",
         ramp_init: float = -2.0,
         **_: Any,
     ) -> None:
