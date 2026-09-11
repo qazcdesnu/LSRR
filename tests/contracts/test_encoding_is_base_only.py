@@ -98,6 +98,59 @@ def test_invariant_catches_a_leaking_encoder(lora_backbone, monkeypatch):
         assert_encoding_is_base_only(lora_backbone, _ids(lora_backbone))
 
 
+def test_question_kv_cache_is_pure_base(lora_backbone):
+    """디코딩이 참조하는 문맥이 순수 base 여야 한다 (ADR-014 의 캐시 경제).
+
+    잠재·답변 토큰은 **캐시된 질문 KV** 에 어텐션한다. 그 캐시가 어댑터를 타면
+    "base 로 인코딩된 문맥 + 정렬된 연속 디코딩" 이라는 모델 정의가 깨지고,
+    Phase B 전 구간의 `H`·KV 재사용 경제도 함께 무너진다.
+
+    비교에 `position_ids` 를 반드시 같이 넘긴다 — 좌측 패딩이라 `encode()` 가
+    명시로 계산하며, 빠뜨리면 KV 가 달라져 **없는 누출을 보고한다.**
+    """
+    ids = _ids(lora_backbone)
+    mask = torch.ones_like(ids)
+    pos = (mask.cumsum(-1) - 1).clamp(min=0)
+
+    def raw(disabled: bool):
+        guard = adapters_disabled(lora_backbone.peft_model if disabled else None)
+        with torch.no_grad(), guard:
+            return lora_backbone.model(
+                input_ids=ids, attention_mask=mask, position_ids=pos, use_cache=True
+            ).past_key_values
+
+    def same(a, b) -> bool:
+        return all(
+            torch.equal(a.layers[i].keys, b.layers[i].keys)
+            and torch.equal(a.layers[i].values, b.layers[i].values)
+            for i in range(len(a.layers))
+        )
+
+    ours = lora_backbone.encode(ids, mask).kv_cache
+    assert same(ours, raw(disabled=True)), "질문 KV 가 base 가 아니다"
+    assert not same(raw(disabled=True), raw(disabled=False)), (
+        "어댑터를 켜도 KV 가 그대로다 — 검증이 공허하다 (lora_B 가 0 인지 확인)"
+    )
+
+
+def test_decoding_actually_uses_the_adapter(lora_backbone):
+    """인코딩만 막고 디코딩에도 안 걸리면 LoRA 가 아무 일도 안 하는 것이다."""
+    ids = _ids(lora_backbone)
+    ctx = lora_backbone.encode(ids)
+    injected = ctx.h_ctx.unsqueeze(1)
+    answer = torch.tensor([[15496, 995]], device=lora_backbone.device)
+
+    def logits(disabled: bool):
+        guard = adapters_disabled(lora_backbone.peft_model if disabled else None)
+        with torch.no_grad(), guard:
+            return lora_backbone.answer_head.teacher_forced(
+                injected, ctx.kv_cache, answer,
+                attention_mask=ctx.attention_mask, q_len=ctx.q_len,
+            )
+
+    assert not torch.equal(logits(disabled=False), logits(disabled=True))
+
+
 def test_base_weights_survive_lora_attachment(bare_backbone):
     """I1 재정의: base 지문은 어댑터 장착 전후로 같다."""
     before = bare_backbone.weight_hash()
