@@ -57,11 +57,21 @@ quasiseparable 양방향 스캔, 감쇠·재주입·사이클 임베딩, M 샘�
 |---|---|
 | ① 자명해 붕괴 없음 | `analysis/collapse.py`의 랭크·분산·유사도 지표 |
 | ② M 증가 → 정확도 증가 | `metrics/anytime.py`의 사이클별 곡선 단조성 |
-| ③ **H+MLP 1회 통과 대비 유의한 우위** | `engine=hydra_qs` vs `engine=mlp_onepass`, 다중 시드 유의성 검정 |
+| ③ **단일 벡터(v1) 대비 궤적 방출의 유의한 우위** | Ablation A 3조건 × 5시드, Welch t + 효과크기 + 절대 차이 하한 (ADR-016) |
 | ④ Δ⁽ᵐ⁾ 궤적의 거시적 감소 | `termination/behavior.py`의 거동 분류 |
 
-**③ 실패 시 킬 스위치 발동 — 아래 마일스톤으로 진행하지 않고 아키텍처를 재검토한다.**
-1차 재검토 순서: 깊은 감독 과잉(λ_ds·γ 하향) → 감쇠 α → 안정화 사다리(`stability`) → 메모리 구성(ADR-004의 보완항) → 엔진 구조.
+**③ 실패는 즉시 킬이 아니다 — 2단 판정이다 (ADR-016).**
+
+| 단계 | 구성 | FAIL 시 |
+|---|---|---|
+| 1단 | Phase A 동결, 콜드 스타트 | 킬하지 않는다. Phase B 만 붙여 2단으로 |
+| 2단 | + LoRA 디코딩 정렬 (나머지 동일, 임계값 동일, **재판정 1회**) | **최종 킬** — 아키텍처 재검토 |
+
+근거: 구성 요소가 상호작용하면(LoRA 정렬이 있어야 궤적의 가치가 드러나는 구조라면) 최소 구성 판정이 거짓 음성을 낸다. §3-⑦이 LoRA 논거를 전적으로 **수신 측**에 둔 것이 그 상호작용의 존재를 주장하는 것이다.
+
+2단 FAIL 후 재검토 순서: 깊은 감독 과잉(λ_ds·γ 하향) → 감쇠 α → 안정화 사다리(`stability`) → 메모리 구성(ADR-004의 보완항) → 엔진 구조.
+
+**이 게이트 런은 논문 표에 싣지 않는다 (ADR-018).** 게이트는 bottom-up 개발 판정이고, 논문 Ablation A 는 최종 구성에서 축 하나를 끄는 top-down 절제로 M6~M7 에서 따로 돌린다.
 
 ### M6 — 본 실험과 종료 규칙 비교 (Phase 1)
 GSM8k-Aug 학습·평가, `termination/calibration.py`, `metrics/pareto.py`, `reporting`.
@@ -75,6 +85,8 @@ GSM8k-Aug 학습·평가, `termination/calibration.py`, `metrics/pareto.py`, `re
 - back-patching 오라클 상한 대비 회수율
 - 범위 검증: closed-book 다중 홉 QA에서 **이득 부재**를 확인 (반증 가능한 예측)
 
+*논문 Ablation A (ADR-018):* 최종 구성(Phase B LoRA + 커리큘럼 + 최적 ε)에서 방출 구조만 바꾸는 **top-down** 절제를 3조건 × 5시드로 돌린다. 설정은 `configs/ablation/A_emission_final.yaml` 로 따로 만든다 — 게이트 런 설정에 커리큘럼 스위치를 더해 겸용하면 어느 조건에서 나온 표인지 설정만 보고 알 수 없다. 게이트 런과 조건 순위가 뒤집히면 그 자체가 상호작용의 직접 증거이므로 논의 절에 싣는다.
+
 *레거시 조치:* 레거시가 참조 가치를 갖는 모든 영역(엔진 수치, 평가 프로토콜, 데이터 스키마, 개입 훅)의 신규 구현이 검증을 마쳤다 — `Legacy_LSRR/` 전체를 삭제한다.
 
 ### M8 — 확장 (Phase 3, 선택)
@@ -85,14 +97,20 @@ GSM8k-Aug 학습·평가, `termination/calibration.py`, `metrics/pareto.py`, `re
 ## 의존 그래프 (마일스톤)
 
 ```
-M0 ─▶ M1 ─▶ M2 ─▶ M3 ─▶ M4 ─▶ M5 ─▶ [Phase 0 게이트]
+M0 ─▶ M1 ─▶ M2 ─▶ M3 ─▶ M4 ─▶ M5 ─▶ [게이트 1단: Phase A]
                              │                      │
                     레거시 runs/caches 삭제          │
-                                     ③ FAIL ────────┤───▶ 아키텍처 재검토 (킬 스위치)
-                                                    │
-                                     PASS ──────────▶ M6 ─▶ M7 ─▶ M8
-                                                            │
-                                                   Legacy_LSRR 전체 삭제
+                                     ③ FAIL ────────▶ [게이트 2단: + Phase B LoRA]
+                                                    │              │
+                                                    │        ③ FAIL ─▶ 아키텍처 재검토 (최종 킬)
+                                                    │              │
+                                     PASS ◀──────────┴──── PASS ───┘
+                                       │
+                                       ▼
+                                      M6 ─▶ M7 ─▶ M8
+                                             │
+                                    논문 Ablation A (top-down, 최종 구성)
+                                    Legacy_LSRR 전체 삭제
 ```
 
 `stability`는 어느 마일스톤에도 속하지 않는다 — 수렴 유도 실패가 **관측될 때** 켜는 예비 장치다 (ADR-007).
