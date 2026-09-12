@@ -102,6 +102,10 @@ prosqa:
     accuracy: 0.652
     std: 0.016
     source: "F-034, 5시드. ③ FAIL (대조군 0.661). 감쇠 α 가 죽은 엔진 (F-035)"
+  - model: "No-CoT · pause + LoRA 0.65% (Ours, 동결 백본)"
+    accuracy: 0.660
+    std: 0.017
+    source: "F-038, 3시드. 질문과 무관한 상수 슬롯 1개 — 엔진 없음. 수신기 혼자의 천장"
   - model: "LSRR Phase B · dynamic_m (Ours, 고친 엔진 + 3e-4·10ep 탐색)"
     accuracy: 0.653
     std: 0.003
