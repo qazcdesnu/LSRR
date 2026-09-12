@@ -1,0 +1,34 @@
+# 진단 — 학습 레시피가 수렴 복권(F-032)을 만드는가
+#
+# **게이트 재판정이 아니다.** ADR-016 은 2단 뒤의 3단을 금지한다. 이 실험은
+# 대조군과 정확도를 비교하지 않고 **메커니즘 지표**만 잰다:
+#   · ε 안착 시드 비율 — 1단에서 dynamic_m 2/5, single_v1 1/5 였다
+#   · anytime 기울기
+#   · grad_norm 스파이크
+# 정확도는 기록만 한다. 킬 스위치 이후 재검토(ADR-016 → ADR-007 안정화 사다리)의
+# 첫 물음 "왜 정제가 수축 사상을 못 배우는가" 에 답하기 위한 것이다.
+#
+# 가설 (사용자 제기): ① 초기 lr 1e-3 이 너무 크다  ② 5 epoch 코사인이 너무 짧다
+# 1단 자료: grad_norm 이 수백까지 튀는 런이 3/5 이나 수렴 여부와 무관. 스케줄은
+# epoch 3(lr≈2.6e-4)에서 +1.06%p 오르다 epoch 4(lr→1e-5)에서 +0.07%p — 포화가
+# 아니라 lr 이 꺼져서 멈췄을 가능성.
+#
+#   R0  lr 1e-3, 5ep   ← 기존 1단 dynamic_m s0~s2 (재사용, 돌리지 않음)
+#   R1  lr 3e-4, 5ep   ← lr 크기 격리
+#   R2  lr 1e-3, 10ep  ← 스케줄 길이 격리 (워밍업도 2,236 스텝으로 늘어난다)
+defaults: [ablation/A_emission_prosqa]
+
+readout:
+  path:
+    emission: trajectory
+  fusion:
+    anchor: first
+
+termination:
+  type: delta_state
+
+sweep:
+  recipe:
+    - {name: lr3e-4_5ep,  train.lr: 3.0e-4, train.epochs: 5}
+    - {name: lr1e-3_10ep, train.lr: 1.0e-3, train.epochs: 10}
+  seed: [0, 1, 2]
