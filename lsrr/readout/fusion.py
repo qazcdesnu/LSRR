@@ -176,4 +176,43 @@ class AttentionPoolingFusion(BaseFusionHead):
         )
 
 
-__all__ = ("AttentionPoolingFusion", "AnchorMode", "FusionType")
+@FUSION_REGISTRY.register("pause")
+class PauseFusion(BaseFusionHead):
+    """**No-CoT 대조군** — 질문과 무관한 학습 상수 벡터 하나를 주입한다.
+
+    Coconut 의 *Pause token* 기준선(Goyal et al. 2023; Coconut Table 1 에서
+    ProsQA 75.9%)과 같은 구성이다. `R_star` 와 `h_ctx` 를 **모두 무시**한다 —
+    엔진·어댑터에는 그래디언트가 흐르지 않으므로 그쪽은 학습되지 않는다.
+
+    왜 "아무것도 주입하지 않는 것" 이 아니라 상수 하나인가: LoRA 는 디코딩
+    전용이라(I9) 질문 **뒤** 위치에만 걸린다. 사고 토큰이 0개면 답의 첫 토큰을
+    예측하는 위치가 질문 마지막 토큰 = base 가 되어 LoRA 가 아무 일도 못 한다.
+    상수 하나를 두면 LoRA 를 타는 위치가 하나 생기고, 엔진 조건과의 차이는
+    정확히 "엔진이 만든 슬롯 vs 내용 없는 슬롯" 이 된다.
+
+    `emission: single` 과 함께 쓴다 — 궤적이면 같은 상수가 M번 반복될 뿐이다.
+    """
+
+    def __init__(self, d_model: int = 768, d_out: int = 768, **_: Any) -> None:
+        super().__init__()
+        self.d_model = d_model
+        self.d_out = d_out
+        self.anchor = "none"
+        self.vector = nn.Parameter(torch.zeros(d_out))
+        nn.init.normal_(self.vector, std=0.02)
+        self.last_alpha: Optional[torch.Tensor] = None
+
+    def forward(
+        self,
+        R_star: torch.Tensor,
+        h_ctx: torch.Tensor,
+        use_anchor: Optional[bool] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        B, L = R_star.shape[0], R_star.shape[1]
+        h = self.vector.unsqueeze(0).expand(B, -1)
+        alpha = torch.full((B, L), 1.0 / L, device=R_star.device, dtype=R_star.dtype)
+        self.last_alpha = alpha
+        return h, alpha
+
+
+__all__ = ("AttentionPoolingFusion", "PauseFusion", "AnchorMode", "FusionType")

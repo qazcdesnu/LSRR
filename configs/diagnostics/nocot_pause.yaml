@@ -1,0 +1,49 @@
+# No-CoT 대조군 — 엔진 없이 LoRA + 상수 슬롯 하나
+#
+# 지금까지 "엔진이 있는 조건끼리" 만 비교했다. 이 런이 하한을 준다: 수신기(LoRA
+# 0.65%) 혼자 ProsQA 를 몇 % 까지 푸는가. F-037 의 dynamic_m 0.653 / single_v1
+# 0.639 가 이 값 위에 얼마를 얹은 것인지가 엔진의 순기여다.
+#
+# 구성은 Coconut Table 1 의 Pause token(75.9%, 백본 전체 미세조정)과 같다 —
+# 질문과 무관한 학습 벡터 하나를 주입한다. 사고 토큰 0개로 두면 답의 첫 토큰이
+# base(질문 마지막 위치)에서 예측되어 LoRA 가 아무 일도 못 한다 (I9).
+#
+# 레시피는 F-037 탐색과 동일 (Phase A lr 3e-4 bs 16 → Phase B lr 1e-4 5ep) 하되
+# Phase A 만 2 epoch — 학습 대상이 상수 벡터(768)와 보정 스칼라(1)뿐이라 10 epoch
+# 은 낭비다. 엔진·어댑터는 조립되지만 그래디언트를 받지 않는다.
+#
+# (exploration 설정을 부모로 두면 그쪽 sweep.condition 축이 병합돼 버려 독립 파일이다.)
+defaults: [base, backbone/gpt2, data/prosqa]
+
+backbone:
+  lora: {r: 8, alpha: 16, dropout: 0.0, target_modules: [c_attn, c_proj]}
+
+memory:
+  adapter: {d_model: 256}
+
+engine: {type: hydra_qs, d_state: 16, n_blocks: 2}
+
+recurrence:
+  schedule: {type: lognormal, mean: 5, max: 8}
+  tbptt_k: 4
+
+termination: {type: delta_state, m_min: 1, m_max: 8}
+
+readout:
+  fusion:
+    type: pause
+  path:
+    emission: single
+    max_new_tokens: 12
+
+train:
+  bs: 16
+  log_every: 100
+  phases:
+    - {name: A, epochs: 2, lr: 3.0e-4, trainable: [engine, memory, emitter]}
+    - {name: B, epochs: 5, lr: 1.0e-4, trainable: [emitter, lora]}
+
+eval: {max_new_tokens: 12}
+
+sweep:
+  seed: [0, 1, 2]
