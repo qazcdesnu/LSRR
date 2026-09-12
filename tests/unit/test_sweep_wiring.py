@@ -327,3 +327,9 @@ def test_train_refuses_to_init_from_a_phase_b_checkpoint():
     """Phase B 산출물 위에 다시 Phase B 를 얹으면 정렬 이득이 이중 계상된다."""
     src = (REPO_ROOT / "scripts" / "train.py").read_text(encoding="utf-8")
     assert 'payload.get("lora")' in src and "이중 계상" in src
+
+
+def test_curriculum_stage_checkpoints_are_not_evaluated(tmp_path):
+    """S1·S2 종점은 CoT 를 생성하므로 답만 재는 평가가 무의미하다 — 최상위 페이즈만."""
+    run = _make_run(tmp_path / "runs", "C", phases=("A", "A_S1", "A_S2.1", "A_S3", "B"))
+    assert [t for _, t in _eval_targets(run)] == ["_phase_A", "_phase_B"]

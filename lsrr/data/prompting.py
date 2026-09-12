@@ -43,12 +43,22 @@ class PromptSpec:
     max_answer_tokens: int = 32
     append_eos: bool = True
     question_truncation_side: str = "left"
+    #: 커리큘럼 (§5.1). None 이면 답만 감독한다(Stage 3). 정수 k 면 CoT 의 앞 k 단계를
+    #: 제거하고 `[c_{k+1} … c_S, 답]` 을 감독한다 — Stage 1 은 k=0, Stage 2 는 k=1…K.
+    #: 잠재 토큰이 질문 직후에 놓이므로 초반 단계부터 흡수해야 논리 순서가 보존된다.
+    cot_keep_from: Optional[int] = None
+    cot_separator: str = " "
 
     def render_question(self, sample: DataSample) -> str:
         return self.question_template.format(question=sample.question)
 
     def render_answer(self, sample: DataSample) -> str:
-        return self.answer_template.format(answer=sample.answer)
+        """감독 대상 문자열. 커리큘럼 중이면 남은 CoT 단계가 답 앞에 붙는다."""
+        if self.cot_keep_from is None:
+            return self.answer_template.format(answer=sample.answer)
+        remaining = list(sample.cot_steps[self.cot_keep_from:])
+        text = self.cot_separator.join([*remaining, sample.answer])
+        return self.answer_template.format(answer=text)
 
 
 class PromptEncoder:
@@ -163,6 +173,8 @@ def prompt_spec_from_cfg(cfg: Any) -> PromptSpec:
         question_truncation_side=str(
             get_path(cfg, "prompt.question_truncation_side", "left")
         ),
+        cot_keep_from=get_path(cfg, "prompt.cot_keep_from", None),
+        cot_separator=str(get_path(cfg, "prompt.cot_separator", " ")),
     )
 
 

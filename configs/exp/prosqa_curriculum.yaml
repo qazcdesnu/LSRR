@@ -1,0 +1,38 @@
+# ProsQA — 단계적 잠재화 커리큘럼 + 2-phase (v2.1 §5.1, 완성형에 가장 가까운 구성)
+#
+# Coconut Table 1: 커리큘럼 없이는 76.1% 로 No-CoT(76.7%)를 못 넘고, 커리큘럼으로
+# 97.0% 다. 우리 게이트(F-033·F-034)는 전부 콜드 스타트였다. 이 런이 77 → 97
+# 구간을 여는지 본다.
+#
+# Phase A 안의 스테이지 (ProsQA 최대 홉 6 → S2 는 k=1..6):
+#   S1     h⁽¹⁾ + CoT 전체 + 답      M=1
+#   S2.k   h⁽¹..k+1⁾ + CoT[k:] + 답   M=k+1   (k=1..6)
+#   S3     h⁽¹..M⁾ + 답              M 동적 (Δ<ε)
+# Coconut 은 스테이지당 5 epoch·총 50 epoch. 여기서는 2 epoch/스테이지·S3 3 epoch
+# = 19 epoch 으로 시작한다 (첫 관측이 목적).
+#
+# 레시피는 F-037 탐색(3e-4·bs16, α=0.5·mix_norm)을 따르고 Phase B 는 동일.
+defaults: [exploration/recipe_lr3e-4_10ep_2phase]
+
+prompt:
+  max_answer_tokens: 12        # S3·평가: 답만
+
+train:
+  phases:
+    - {name: A, epochs: 17, lr: 3.0e-4, trainable: [engine, memory, emitter]}  # 스테이지 합 (2+6×2+3); 스테이지가 있으면 이 값은 참고용
+    - {name: B, epochs: 5,  lr: 1.0e-4, trainable: [emitter, lora]}
+  curriculum:
+    max_cot_steps: 6
+    answer_tokens_with_cot: 96  # CoT 최대 6문장 ≈ 60~80 토큰
+    stages:
+      - {name: S1, remove_cot: 0, M: 1, epochs: 2}
+      - {expand: S2, epochs: 2}
+      - {name: S3, epochs: 3}
+
+sweep:
+  condition:
+    - name: dynamic_m
+      readout.path.emission: trajectory
+      termination.type: delta_state
+      readout.fusion.anchor: first
+  seed: [0]

@@ -122,7 +122,10 @@ def _eval_targets(run_dir: Path) -> list[tuple[Path, str]]:
     페이즈 체크포인트가 없으면 단일 페이즈 런이므로 `last.pt` 하나다.
     """
     ckpt_dir = run_dir / "checkpoints"
-    phases = sorted(ckpt_dir.glob("phase_*.pt"))
+    # 최상위 페이즈만 (`phase_A.pt`, `phase_B.pt`). 커리큘럼의 스테이지 종점
+    # (`phase_A_S1.pt` …)은 CoT 를 생성하는 체크포인트라 답만 재는 평가가 무의미하고,
+    # 런당 평가가 10회로 불어난다.
+    phases = sorted(p for p in ckpt_dir.glob("phase_*.pt") if "_" not in p.stem[len("phase_"):])
     if phases:
         return [(p, f"_{p.stem}") for p in phases]
     last = ckpt_dir / "last.pt"

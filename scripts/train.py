@@ -21,6 +21,7 @@ from lsrr.data import PromptEncoder, prompt_spec_from_cfg
 from lsrr.data.collate import make_loader
 from lsrr.model import LSRRModel
 from lsrr.runtime import Trainer, load_checkpoint, parameter_summary, resolve_device, set_seed
+from lsrr.runtime.curriculum import apply_stage, stages_from_cfg
 from lsrr.runtime.phases import apply_phase, attach_phase_lora, phases_from_cfg
 from lsrr.telemetry import ExperimentTracker
 
@@ -140,14 +141,49 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{phase.name}] 학습 대상 {total:,} — {groups['by_group']}")
             tracker.update_meta(**{f"phase_{phase.name}_trainable": groups["by_group"]})
 
-            trainer = Trainer(
-                model, bundle.objective, tracker, cfg, device=device,
-                params=groups["params"], lr=phase.lr, epochs=phase.epochs,
-                phase=phase.name if multi else None,
-            )
-            r = trainer.fit(loader)
-            print(f"[{phase.name}] 완료: {r['steps']} 스텝, {r['seconds']:.1f}초")
-            results.append(r)
+            stages = stages_from_cfg(cfg) if phase.name == "A" else []
+            if not stages:
+                trainer = Trainer(
+                    model, bundle.objective, tracker, cfg, device=device,
+                    params=groups["params"], lr=phase.lr, epochs=phase.epochs,
+                    phase=phase.name if multi else None,
+                )
+                r = trainer.fit(loader)
+                print(f"[{phase.name}] 완료: {r['steps']} 스텝, {r['seconds']:.1f}초")
+                results.append(r)
+                continue
+
+            # 단계적 잠재화 커리큘럼 (§5.1). 스테이지가 바꾸는 것은 타깃(남은 CoT +
+            # 답)·M·옵티마이저(리셋)뿐이고, 학습 대상은 페이즈가 정한 그대로다.
+            print(f"[{phase.name}] 커리큘럼 {len(stages)}단계: "
+                  + " → ".join(f"{st.name}(k={st.remove_cot}, M={st.M or '동적'}, {st.epochs}ep)"
+                               for st in stages))
+            total_steps = total_sec = 0.0
+            for st in stages:
+                stage_spec = st.prompt_spec(spec)
+                stage_loader = make_loader(
+                    bundle.data.get_split("train"),
+                    PromptEncoder(bundle.encoder.tokenizer, stage_spec),
+                    batch_size=int(get_path(cfg, "train.bs", 16)),
+                    shuffle=True, generator=generator,
+                )
+                info = apply_stage(bundle.runner, cfg, st)
+                trainer = Trainer(  # 새 Trainer = 옵티마이저·스케줄러 리셋
+                    model, bundle.objective, tracker, cfg, device=device,
+                    params=groups["params"], lr=phase.lr, epochs=st.epochs,
+                    phase=f"{phase.name}_{st.name}",
+                )
+                r = trainer.fit(stage_loader)
+                total_steps += r["steps"]; total_sec += r["seconds"]
+                print(f"[{phase.name}·{st.name}] 완료: {r['steps']} 스텝, {r['seconds']:.1f}초  "
+                      f"(M={info['M']}, 감독 최대 {stage_spec.max_answer_tokens}토큰)")
+                tracker.update_meta(**{f"stage_{st.name}": {"steps": r["steps"], "M": info["M"],
+                                                             "remove_cot": st.remove_cot}})
+            # 마지막 스테이지(S3)가 phase_A.pt 가 되도록 페이즈 이름으로 한 번 더 남긴다
+            from lsrr.runtime.checkpoint import save_checkpoint
+            save_checkpoint(model, tracker.checkpoint_dir / f"phase_{phase.name}.pt",
+                            step=int(total_steps), meta={"phase": phase.name, "curriculum": True})
+            results.append({"steps": total_steps, "seconds": total_sec})
 
         result = {
             "steps": sum(r["steps"] for r in results),
