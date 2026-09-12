@@ -147,7 +147,10 @@ def evaluate(
     preds: list[str] = []
     golds: list[str] = []
     anytime_hits: dict[int, int] = {}
-    anytime_total = 0
+    # 분모는 **사이클마다 따로** 센다. 배치마다 사이클 수가 다르므로(동적 종료)
+    # 하나의 분모를 쓰면 소수 배치만 도달한 뒤쪽 사이클이 눌려 0 에 가까워진다 —
+    # 곡선의 꼬리가 인위적으로 무너져 게이트 ②의 추세가 오염된다.
+    anytime_total: dict[int, int] = {}
     trajectories: list[list[float]] = []
     collapse: Optional[CollapseReport] = None
 
@@ -186,11 +189,11 @@ def evaluate(
             trajectories.extend(_per_sample_deltas(recorder, len(answers)))
 
         if want_anytime and cycle_states:
-            anytime_total += len(answers)
             # "사이클 m 에서 멈췄다면" — 궤적의 앞 m+1개 토큰만 주입한다.
             # 상태 하나만 넣으면 방출 구조가 아니라 **마지막 상태의 품질**을
             # 재게 되어, 게이트 ②가 게이트 ③과 다른 것을 말한다.
             for m, R_m in enumerate(cycle_states):
+                anytime_total[m] = anytime_total.get(m, 0) + len(answers)
                 cycle_tokens = model.readout.generate(
                     R_m,
                     context.h_ctx,
@@ -213,7 +216,7 @@ def evaluate(
         accuracy=correct / total,
         num_samples=total,
         mean_cycles=cycles_sum / total,
-        anytime={m: h / anytime_total for m, h in sorted(anytime_hits.items())}
+        anytime={m: h / anytime_total[m] for m, h in sorted(anytime_hits.items())}
         if anytime_total
         else {},
         delta_trajectories=trajectories,

@@ -61,11 +61,14 @@ class _Model:
     """조립 없이 평가 흐름만 태우는 최소 스텁."""
 
     def __init__(self, readout: _Readout, M: int = 3, batch_shapes=(2,),
-                 emits_trajectory: bool = True) -> None:
+                 emits_trajectory: bool = True, cycles_per_batch=None) -> None:
         self.readout = readout
         self.encode_counter = _Counter()
         self.M = M
         self.emits_trajectory = emits_trajectory
+        # 동적 종료는 배치마다 사이클 수가 다르다 — 그 상황을 재현한다.
+        self.cycles_per_batch = list(cycles_per_batch) if cycles_per_batch else None
+        self._batch = 0
 
     def eval(self):
         return self
@@ -102,7 +105,11 @@ class _Model:
     def refine(self, R0, hooks=(), is_eval=False):
         trace = ReasoningTrace(R0=R0)
         R = R0
-        for m in range(self.M):
+        M = self.M
+        if self.cycles_per_batch:
+            M = self.cycles_per_batch[self._batch % len(self.cycles_per_batch)]
+            self._batch += 1
+        for m in range(M):
             R_next = torch.full_like(R0, float(m))
             diag = CycleDiagnostics(
                 m=m,
@@ -114,7 +121,7 @@ class _Model:
                 h.on_cycle(m, R, R_next, diag)
             R = R_next
         trace.R_star = R
-        trace.stopping_cycles = torch.tensor([self.M, self.M])
+        trace.stopping_cycles = torch.tensor([M, M])
         return trace
 
 
@@ -249,6 +256,23 @@ def test_anytime_costs_m_generations_per_batch():
              anytime_batches=1)
     # 최종 1회 + 사이클 3회
     assert len(readout.calls) == 4
+
+
+def test_anytime_denominator_is_per_cycle():
+    """배치마다 사이클 수가 다르면 분모도 달라야 한다.
+
+    하나의 분모를 쓰면 소수 배치만 도달한 뒤쪽 사이클이 눌려 0 에 가까워진다.
+    실측에서 `m0~m3 ≈ 0.60` 뒤에 `m4 = 0.060` 이라는 절벽이 나왔다 — 곡선의
+    꼬리가 인위적으로 무너져 게이트 ②의 추세가 오염된다.
+    """
+    readout = _Readout({}, ["42", "7"])
+    # 배치 4개 중 하나만 사이클 5까지 간다.
+    model = _Model(readout, cycles_per_batch=[3, 3, 3, 5])
+    result = evaluate(model, _batches(4), decode=_decode,
+                      scorer=lambda p, g: True, anytime_batches=4)
+    # 전부 정답인 스코어러이므로 **모든** 사이클이 1.0 이어야 한다.
+    assert set(result.anytime) == {0, 1, 2, 3, 4}
+    assert all(v == pytest.approx(1.0) for v in result.anytime.values()), result.anytime
 
 
 def test_final_accuracy_is_generated_from_the_whole_trajectory():
