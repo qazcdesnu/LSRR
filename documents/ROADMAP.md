@@ -79,6 +79,8 @@ quasiseparable 양방향 스캔, 감쇠·재주입·사이클 임베딩, M 샘�
 GSM8k-Aug 학습·평가, `termination/calibration.py`, `metrics/pareto.py`, `reporting`.
 *완료 조건:* 동일 지연 예산 정확도 곡선(핵심 그림)이 산출된다. 외부 공표치와의 표가 †/‡ 표기로 생성된다.
 
+*Ablation E — 순차 최적화의 공적응 격차 (§7.1-2):* 2-Phase vs 2-Phase+C vs Joint end-to-end. **2원화는 성능이 아니라 귀속(Ablation B)과 해석 가능성(§7.2 logit-lens 가 임베딩 매니폴드 근처에서만 성립)을 위한 설계이며, 공동 학습 대비 성능 격차는 논리로 반박하지 않고 여기서 측정해 싣는다.** 격차가 있으면 최종 모델은 Phase C 를 거친 것을 쓰되 Phase A/B 분해는 그대로 보고한다. 논문 Ablation A(ADR-018)의 "최종 구성" 에 Phase C 를 넣을지는 이 결과로 정한다. 선례: LLaVA(동결 LLM 앞에서 프로젝터 먼저 → LLM 적응), BLIP-2, Coconut 의 단계별 커리큘럼. 캐시 경제(I9)는 2원화의 근거가 **아니다** — I9 를 지키면서 공동 학습하는 것이 곧 Phase C 다.
+
 ### M7 — 메커니즘 분석 (Phase 2)
 `analysis` 전체 + `backbone/interventions.py`.
 - 홉 수별 평균 수렴 사이클 (단조 증가 예측)
