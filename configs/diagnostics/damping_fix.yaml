@@ -9,6 +9,8 @@
 #   engine.damping_alpha: 0.5  (같은 체크포인트 평가 시점 교체에서 4/5 안착. 0.3 은 과감쇠)
 defaults: [exp/prosqa_gpt2]
 
+# 실행 당시 base.yaml 은 α=0.8·mix_norm 없음이었고 여기서 명시로 켰다.
+# F-036 뒤 base.yaml 이 α=0.5·mix_norm=true 가 되어 지금은 base 와 같다.
 engine:
   damping_alpha: 0.5
   mix_norm: true
