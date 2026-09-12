@@ -99,8 +99,13 @@ prosqa:
     std: 0.017
     source: "F-033, 5시드, 동결 백본·콜드 스타트·5 epoch"
   - model: "LSRR Phase B · dynamic_m (Ours, 게이트 2단)"
-    accuracy: null
-    source: "판정 대기"
+    accuracy: 0.652
+    std: 0.016
+    source: "F-034, 5시드. ③ FAIL (대조군 0.661). 감쇠 α 가 죽은 엔진 (F-035)"
+  - model: "LSRR Phase B · dynamic_m (Ours, 고친 엔진 + 3e-4·10ep 탐색)"
+    accuracy: 0.653
+    std: 0.003
+    source: "F-037, 3시드 — 게이트 아님. 대조군 0.639 (+0.014, p=0.01)"
 
 # GSM8k 보강 — 원 논문 직접 대조 (위 InnerThoughts 출처 값과 다르다; 출처를 병기한다)
 gsm8k_verified:
