@@ -1,0 +1,74 @@
+# 탐색 — 학습 레시피를 고치면 2-phase 로 대조군의 66% 를 넘는가
+#
+# **게이트 재판정이 아니다** (ADR-016 은 2단 뒤의 3단을 금지). 킬 스위치 이후
+# 재검토의 첫 탐색이며, 유망하면 5시드로 늘려 **새 ADR 로 사전 등록**한 뒤
+# 정식 판정한다.
+#
+# 가설 (사용자 제기): 1단·2단의 Phase A 레시피(lr 1e-3, 5 epoch 코사인)가
+# ① 초기 lr 이 너무 크고 ② 스케줄이 너무 짧아 학습을 조기에 끊었다.
+# 1단 자료: epoch 3(lr≈2.6e-4)에서 +1.06%p 오르다 epoch 4(lr→1e-5)에서 +0.07%p.
+#
+# **대조군을 같은 레시피로 함께 돌린다.** 66% 는 대조군의 Phase B 수치이므로
+# 처치군만 새 레시피로 돌려 넘겨 봐야 방출 구조 덕인지 레시피 덕인지 가를 수
+# 없다. 두 조건을 함께 돌리면 레시피 효과(둘 다 오르는가)와 상호작용(궤적이 더
+# 오르는가)을 한 번에 본다.
+#
+# Phase B 는 기존(lr 1e-4, 5 epoch)과 동일하게 둔다 — 2단의 Phase B 증분
+# (+0.065)과 비교 가능해야 하고, 바꾸는 것은 한 번에 하나다.
+#
+# 측정: 정확도, ε 안착 시드 비율(F-032), anytime 기울기, Phase A→B 증분.
+defaults: [base, backbone/gpt2, data/prosqa]
+
+backbone:
+  lora:
+    r: 8
+    alpha: 16
+    dropout: 0.0
+    target_modules: [c_attn, c_proj]
+
+memory:
+  adapter:
+    d_model: 256
+
+engine:
+  type: hydra_qs
+  d_state: 16
+  n_blocks: 2
+
+recurrence:
+  schedule: {type: lognormal, mean: 5, max: 8}
+  tbptt_k: 4
+
+termination:
+  type: delta_state
+  m_min: 1
+  m_max: 8
+
+readout:
+  path:
+    emission: trajectory
+    max_new_tokens: 12
+  fusion:
+    anchor: first
+
+train:
+  bs: 8
+  log_every: 200
+  phases:
+    - {name: A, epochs: 10, lr: 3.0e-4, trainable: [engine, memory, emitter]}
+    - {name: B, epochs: 5,  lr: 1.0e-4, trainable: [emitter, lora]}
+
+eval:
+  max_new_tokens: 12
+
+sweep:
+  condition:
+    - name: single_v1
+      readout.path.emission: single
+      termination.type: delta_state
+      readout.fusion.anchor: ctx
+    - name: dynamic_m
+      readout.path.emission: trajectory
+      termination.type: delta_state
+      readout.fusion.anchor: first
+  seed: [0, 1, 2]
