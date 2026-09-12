@@ -17,6 +17,12 @@
 # (+0.065)과 비교 가능해야 하고, 바꾸는 것은 한 번에 하나다.
 #
 # 측정: 정확도, ε 안착 시드 비율(F-032), anytime 기울기, Phase A→B 증분.
+#
+# **배치 16** (1단·2단은 8). bs 8 이 VRAM 을 5.7/16GB 만 써서 올렸다. 스텝 수가
+# 절반이 되므로(10ep = 11,180 스텝) 워밍업도 1,118 스텝으로 1단과 같아진다.
+# lr 과 bs 를 동시에 바꾸므로 1단 레시피(1e-3·bs8)와의 비교는 이중 교락이다 —
+# 이 탐색이 답하는 것은 "이 레시피에서 궤적이 대조군을 넘는가" 이지 "lr 이
+# 원인인가" 가 아니다. 후자는 diagnostics/recipe_stability 가 격리한다.
 defaults: [base, backbone/gpt2, data/prosqa]
 
 backbone:
@@ -52,8 +58,8 @@ readout:
     anchor: first
 
 train:
-  bs: 8
-  log_every: 200
+  bs: 16
+  log_every: 100
   phases:
     - {name: A, epochs: 10, lr: 3.0e-4, trainable: [engine, memory, emitter]}
     - {name: B, epochs: 5,  lr: 1.0e-4, trainable: [emitter, lora]}
