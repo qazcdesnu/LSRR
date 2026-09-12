@@ -25,3 +25,91 @@ multiplication_4x4:
     source: "Synthetic arithmetic benchmark"
   - model: "LSRR-HydraQS (Ours)"
     accuracy: null
+
+# ─────────────────────────────────────────────────────────────────────────
+# ProsQA (GPT-2). 원 논문 표를 직접 대조한 값 (2026-09-12).
+# 출처: Coconut, Hao et al. 2024, arXiv:2412.06769v4, Table 1 (p.9).
+#   설정: GPT-2, lr 1e-4, 유효 배치 128, c=1 사고/단계, 6스테이지 + 초기 스테이지,
+#         스테이지당 5 epoch, 마지막 스테이지에 머물러 총 50 epoch, val 정확도로
+#         체크포인트 선택, 탐욕적 디코딩. 정확도 = 최종 답 정오, ± 는 표준편차.
+#   iCoT ProsQA 는 Coconut 저자들이 iCoT 를 재현한 값이다 — iCoT 원 논문
+#   (Deng et al. 2024, arXiv:2405.14838)은 곱셈·GSM8K 만 다룬다.
+#   CODI (Shen et al. 2025, arXiv:2502.21074)는 GSM8k·GSM8k-NL·CommonsenseQA·
+#   SVAMP·GSM-Hard·MultiArith 만 다룬다 — ProsQA 없음.
+prosqa:
+  - model: "Chance (2-way)"
+    accuracy: 0.50
+    source: "구성상 — 두 후보 중 택일"
+    verified: true
+  - model: "No-CoT (GPT-2)†"
+    accuracy: 0.767
+    std: 0.010
+    tokens: 8.2
+    source: "Coconut Table 1"
+    verified: true
+  - model: "CoT (GPT-2)†"
+    accuracy: 0.775
+    std: 0.019
+    tokens: 49.4
+    source: "Coconut Table 1"
+    verified: true
+  - model: "Pause token (GPT-2)†"
+    accuracy: 0.759
+    std: 0.007
+    tokens: 8.2
+    source: "Coconut Table 1"
+    verified: true
+  - model: "iCoT (GPT-2)†"
+    accuracy: 0.982
+    std: 0.003
+    tokens: 8.2
+    source: "Coconut Table 1 (Coconut 저자 재현; iCoT 원 논문에 ProsQA 없음)"
+    verified: true
+  - model: "Coconut (GPT-2)†"
+    accuracy: 0.970
+    std: 0.003
+    tokens: 14.2
+    source: "Coconut Table 1"
+    verified: true
+  - model: "Coconut w/o curriculum (GPT-2)†"
+    accuracy: 0.761
+    std: 0.002
+    tokens: 14.2
+    source: "Coconut Table 1"
+    verified: true
+    note: "콜드 스타트. 백본 전체를 미세조정해도 No-CoT 를 넘지 못한다 — 논문 §5.3 'The LLM still needs guidance'"
+  - model: "Coconut w/o thought (GPT-2)†"
+    accuracy: 0.955
+    std: 0.011
+    tokens: 8.2
+    source: "Coconut Table 1"
+    verified: true
+  - model: "Coconut pause-as-thought (GPT-2)†"
+    accuracy: 0.966
+    std: 0.008
+    tokens: 8.2
+    source: "Coconut Table 1"
+    verified: true
+  - model: "CODI (GPT-2)"
+    accuracy: null
+    source: "CODI 논문에 ProsQA 실험 없음"
+    verified: true
+  - model: "LSRR Phase A · dynamic_m (Ours, 게이트 1단)"
+    accuracy: 0.592
+    std: 0.017
+    source: "F-033, 5시드, 동결 백본·콜드 스타트·5 epoch"
+  - model: "LSRR Phase B · dynamic_m (Ours, 게이트 2단)"
+    accuracy: null
+    source: "판정 대기"
+
+# GSM8k 보강 — 원 논문 직접 대조 (위 InnerThoughts 출처 값과 다르다; 출처를 병기한다)
+gsm8k_verified:
+  - {model: "No-CoT (GPT-2)†",   accuracy: 0.165, std: 0.005, source: "Coconut Table 1", verified: true}
+  - {model: "CoT (GPT-2)†",      accuracy: 0.429, std: 0.002, source: "Coconut Table 1", verified: true}
+  - {model: "iCoT (GPT-2)†",     accuracy: 0.300, source: "iCoT 논문 Table 3 (ICoT-SI, GPT-2 Small); Coconut Table 1 도 인용", verified: true}
+  - {model: "Coconut (GPT-2)†",  accuracy: 0.341, std: 0.015, source: "Coconut Table 1", verified: true}
+  - {model: "No-CoT-SFT (GPT-2)†", accuracy: 0.191, source: "CODI Figure 3 (GPT-2)", verified: true}
+  - {model: "iCoT (GPT-2)†",     accuracy: 0.301, source: "CODI Figure 3 (GPT-2, 재현)", verified: true}
+  - {model: "Coconut (GPT-2)†",  accuracy: 0.341, source: "CODI Figure 3 (GPT-2, 재현)", verified: true}
+  - {model: "CODI (GPT-2)†",     accuracy: 0.437, source: "CODI Figure 3 (GPT-2)", verified: true}
+  - {model: "CoT-SFT (GPT-2)†",  accuracy: 0.441, source: "CODI Figure 3 (GPT-2)", verified: true}
