@@ -16,16 +16,16 @@
 #   R0  lr 1e-3, 5ep   ← 기존 1단 dynamic_m s0~s2 (재사용, 돌리지 않음)
 #   R1  lr 3e-4, 5ep   ← lr 크기 격리
 #   R2  lr 1e-3, 10ep  ← 스케줄 길이 격리 (워밍업도 2,236 스텝으로 늘어난다)
-defaults: [ablation/A_emission_prosqa]
+# 부모를 `ablation/A_emission_prosqa` 로 두면 그쪽의 `sweep.condition` 축이
+# 병합돼 3조건 × 3시드 × 2레시피 = 18런이 된다. dynamic_m 하나만 필요하므로
+# 스윕 절이 없는 exp/prosqa_gpt2 (= dynamic_m 구성) 를 부모로 둔다.
+defaults: [exp/prosqa_gpt2]
 
-readout:
-  path:
-    emission: trajectory
-  fusion:
-    anchor: first
-
-termination:
-  type: delta_state
+train:
+  epochs: 5
+  bs: 8
+  lr: 1.0e-3
+  log_every: 200
 
 sweep:
   recipe:
