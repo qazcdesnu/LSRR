@@ -227,14 +227,14 @@ def _write_run(tmp_path: Path, *, collapse, anytime, traj, hydra, mlp) -> Path:
     return runs
 
 
-def _run_cli(runs: Path, out: Path) -> tuple[int, str]:
+def _run_cli(runs: Path, out: Path, *extra: str) -> tuple[int, str]:
     proc = subprocess.run(
         [
             sys.executable, str(REPO_ROOT / "scripts" / "check_gates.py"),
             "--run", str(runs / "r1"), "--runs-dir", str(runs),
             "--treatment-glob", "*condition_dynamic_m*",
             "--control-glob", "*condition_single_v1*",
-            "--json", str(out),
+            "--json", str(out), *extra,
         ],
         capture_output=True, text=True, cwd=str(REPO_ROOT),
     )
@@ -322,3 +322,36 @@ def test_min_difference_is_configurable():
     hydra, mlp = [0.23, 0.232, 0.229], [0.221, 0.223, 0.220]
     assert not gate_beats_baseline(hydra, mlp, min_difference=0.05).passed
     assert gate_beats_baseline(hydra, mlp, min_difference=0.005).passed
+
+
+def test_baseline_stage_measures_gate3_but_does_not_kill(tmp_path):
+    """1단(Phase A)은 기준선이다 — ③을 재되 킬 스위치를 발동하지 않는다 (ADR-016 재개정).
+
+    학습되지 않은 수신기 앞에서는 궤적 방출이 이길 이유가 없으므로, 1단의 ③ FAIL
+    은 수신 병목의 비용이지 판정이 아니다. 같은 술어·같은 임계값으로 측정만 한다.
+    """
+    import math
+
+    runs = _write_run(
+        tmp_path,
+        collapse={"effective_rank": 8.4, "mean_similarity": 0.21, "variance_ratio": 0.83},
+        anytime={"0": 0.11, "1": 0.19, "2": 0.24, "3": 0.31},
+        traj=[[2.85 / (2**m) for m in range(10)] for _ in range(20)],
+        hydra=[0.58, 0.57, 0.59, 0.58, 0.57],   # 처치가 대조보다 **낮다**
+        mlp=[0.60, 0.59, 0.61, 0.60, 0.59],
+    )
+    code_kill, out_kill = _run_cli(runs, tmp_path / "k.json", "--stage", "kill")
+    code_base, out_base = _run_cli(runs, tmp_path / "b.json", "--stage", "baseline")
+
+    assert code_kill == 2 and "킬 스위치 발동" in out_kill
+    assert code_base != 2 and "킬 스위치 발동" not in out_base
+    assert "기준선" in out_base
+
+    k = json.loads((tmp_path / "k.json").read_text(encoding="utf-8"))
+    b = json.loads((tmp_path / "b.json").read_text(encoding="utf-8"))
+    g3k = next(r for r in k["gates"] if r["id"] == "③")
+    g3b = next(r for r in b["gates"] if r["id"] == "③")
+    # 수치는 같고 역할만 다르다 — 1단 수치를 2단 형식으로 나란히 놓을 수 있다.
+    assert g3k["detail"] == g3b["detail"]
+    assert g3k["is_kill_switch"] and not g3b["is_kill_switch"]
+    assert k["kill_switch_triggered"] and not b["kill_switch_triggered"]

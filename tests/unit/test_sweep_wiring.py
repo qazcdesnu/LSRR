@@ -270,3 +270,60 @@ def test_trainer_writes_a_stable_checkpoint_name():
     """평가·스윕이 에폭 번호를 몰라도 되게 경로가 예측 가능해야 한다."""
     src = (REPO_ROOT / "lsrr" / "runtime" / "trainer.py").read_text(encoding="utf-8")
     assert '"last.pt"' in src
+
+
+# ------------------------------------------------- 2단: 1단 체크포인트 이어 받기
+
+
+def _stage_run(runs: Path, base: str, cond: str, seed: int, files=("last.pt",)) -> Path:
+    run = runs / f"{base}_condition_{cond}_seed_{seed}_hydra_qs_gpt2_t_s{seed}"
+    (run / "checkpoints").mkdir(parents=True)
+    for f in files:
+        (run / "checkpoints" / f).write_bytes(b"")
+    return run
+
+
+def test_init_from_sweep_maps_each_child_to_the_same_condition_and_seed(tmp_path):
+    """2단은 1단의 **같은 조건·같은 시드** Phase A 위에 얹는다 (ADR-016).
+
+    조건이 어긋나면 `single_v1` 의 Phase A 위에 `dynamic_m` 의 Phase B 를 얹는
+    식이 되어 비교가 무의미해진다.
+    """
+    from scripts.sweep import _init_checkpoint
+
+    runs = tmp_path / "runs"
+    a = _stage_run(runs, "ablation_A_emission_prosqa", "dynamic_m", 3)
+    _stage_run(runs, "ablation_A_emission_prosqa", "single_v1", 3)
+    child = _child("ablation_A_emission_prosqa_stage2_condition_dynamic_m_seed_3")
+    assert _init_checkpoint(runs, "ablation/A_emission_prosqa", child) == a / "checkpoints" / "last.pt"
+
+
+def test_init_from_sweep_prefers_phase_a_over_last(tmp_path):
+    """1단이 2페이즈 런이었다면 `last.pt` 는 Phase B 다 — Phase A 의 끝을 집어야 한다."""
+    from scripts.sweep import _init_checkpoint
+
+    runs = tmp_path / "runs"
+    a = _stage_run(runs, "X", "fixed_k", 0, files=("phase_A.pt", "phase_B.pt", "last.pt"))
+    child = _child("X_stage2_condition_fixed_k_seed_0")
+    assert _init_checkpoint(runs, "X", child).name == "phase_A.pt"
+
+
+def test_init_from_sweep_refuses_ambiguity(tmp_path):
+    """후보가 0개거나 2개면 멈춘다 — 조용히 하나를 고르면 출처를 알 수 없다."""
+    from scripts.sweep import _init_checkpoint
+
+    runs = tmp_path / "runs"
+    child = _child("X_stage2_condition_fixed_k_seed_0")
+    with pytest.raises(SystemExit, match="0개"):
+        _init_checkpoint(runs, "X", child)
+    _stage_run(runs, "X", "fixed_k", 0)
+    dup = runs / "X_condition_fixed_k_seed_0_hydra_qs_gpt2_t2_s0"
+    (dup / "checkpoints").mkdir(parents=True)
+    with pytest.raises(SystemExit, match="2개"):
+        _init_checkpoint(runs, "X", child)
+
+
+def test_train_refuses_to_init_from_a_phase_b_checkpoint():
+    """Phase B 산출물 위에 다시 Phase B 를 얹으면 정렬 이득이 이중 계상된다."""
+    src = (REPO_ROOT / "scripts" / "train.py").read_text(encoding="utf-8")
+    assert 'payload.get("lora")' in src and "이중 계상" in src

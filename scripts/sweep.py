@@ -129,6 +129,31 @@ def _eval_targets(run_dir: Path) -> list[tuple[Path, str]]:
     return [(last, "")] if last.exists() else []
 
 
+def _init_checkpoint(runs_dir: Path, source_exp: str, child: SweepChild) -> Path:
+    """`source_exp` 스윕에서 같은 조건·시드의 런을 찾아 시작점 체크포인트를 돌려준다.
+
+    자식 이름은 `<base>_condition_<c>_seed_<s>` 꼴이므로 `_condition_` 이후를
+    맞춘다. 후보가 없거나 둘 이상이면 멈춘다 — 조용히 하나를 고르면 어느
+    Phase A 위에 얹었는지 설정만 보고는 알 수 없게 된다.
+    """
+    suffix = child.name[child.name.index("_condition_"):]
+    stem = source_exp.replace("/", "_")
+    candidates = sorted(runs_dir.glob(f"{stem}{suffix}_*"))
+    candidates = [c for c in candidates if (c / "checkpoints").is_dir()]
+    if len(candidates) != 1:
+        raise SystemExit(
+            f"{child.name} 의 시작점을 정할 수 없다: {stem}{suffix}_* 에 해당하는 "
+            f"런이 {len(candidates)}개다 (정확히 1개여야 한다). "
+            + (f"{[c.name for c in candidates]}" if candidates else "")
+        )
+    ckpt_dir = candidates[0] / "checkpoints"
+    # 1단은 단일 페이즈라 last.pt 가 Phase A 의 끝이다. 2페이즈 런이면 phase_A.pt.
+    for name in ("phase_A.pt", "last.pt"):
+        if (ckpt_dir / name).exists():
+            return ckpt_dir / name
+    raise SystemExit(f"{ckpt_dir} 에 체크포인트가 없다.")
+
+
 def _child_overrides(child: SweepChild, rest: list[str]) -> list[str]:
     """설정 인자 + 이 자식의 sweep 덮어쓰기. 덮어쓰기가 뒤에 와야 이긴다."""
     return [*rest, *child.dotlist]
@@ -150,11 +175,13 @@ def _execute(
                     "skipped": True}
 
     overrides = _child_overrides(child, rest)
-    code, out = _run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "train.py"),
-         "--runs-dir", str(args.runs_dir), "--run-name", child.name, *overrides],
-        f"{child.name} train",
-    )
+    train_cmd = [sys.executable, str(REPO_ROOT / "scripts" / "train.py"),
+                 "--runs-dir", str(args.runs_dir), "--run-name", child.name]
+    if args.init_from_sweep:
+        init = _init_checkpoint(args.runs_dir, args.init_from_sweep, child)
+        print(f"    시작점: {init}", flush=True)
+        train_cmd += ["--init-from", str(init)]
+    code, out = _run([*train_cmd, *overrides], f"{child.name} train")
     run_dir = _run_dir_from(out)
     if code != 0 or run_dir is None:
         return None
@@ -198,6 +225,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--anytime-batches", type=int, default=1)
     ap.add_argument("--index", type=int, default=None,
                     help="이 인덱스의 자식 하나만 돌린다 (slurm 배열용)")
+    ap.add_argument("--init-from-sweep", type=str, default=None,
+                    help="각 자식을 이 스윕(exp 이름)의 같은 조건·시드 런 체크포인트에서 "
+                         "시작한다. 2단이 1단의 Phase A 를 이어 받을 때 (ADR-016)")
     ap.add_argument("--list", action="store_true", help="조합을 나열만 한다")
     ap.add_argument("--count", action="store_true", help="조합 수만 출력한다")
     ap.add_argument("--json", action="store_true", help="--list 를 JSON 으로")

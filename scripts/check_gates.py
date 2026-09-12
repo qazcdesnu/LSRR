@@ -25,9 +25,13 @@
 
 ## 사용
 
-    python scripts/check_gates.py --runs-dir runs \
+    # 1단 (Phase A 기준선): ③을 측정하되 킬 스위치로 취급하지 않는다
+    python scripts/check_gates.py --stage baseline --runs-dir runs \
         --treatment-glob '*condition_dynamic_m*' \
         --control-glob '*condition_single_v1*'
+
+    # 2단 (Phase B): ③이 킬 스위치다 (기본)
+    python scripts/check_gates.py --stage kill --runs-dir runs ...
 
     python scripts/check_gates.py --run runs/<run_id>          # ①②④만
     python scripts/check_gates.py ... --json out.json          # 기계 판독용
@@ -131,23 +135,42 @@ def evaluate_kill_switch(
     treatment_glob: Optional[str],
     control_glob: Optional[str],
     th: Phase0Thresholds,
+    stage: str = "kill",
 ) -> GateResult:
+    """게이트 ③. `stage` 가 판정의 **역할**을 정한다 (ADR-016 재개정).
+
+    - `kill`     2단(Phase B). 측정된 FAIL 이 킬 스위치를 발동한다.
+    - `baseline` 1단(Phase A). 같은 술어·같은 임계값으로 **측정하되 판정하지
+                 않는다.** 학습되지 않은 수신기 앞에서는 궤적 방출이 이길 이유가
+                 없으므로, 여기서의 FAIL 은 수신 병목의 비용이지 판정이 아니다.
+    """
+    kill = stage == "kill"
+    name = _KILL_NAME if kill else _KILL_NAME + " (기준선 — 판정 아님)"
     if runs_dir is None or not treatment_glob or not control_glob:
         return _unavailable(
-            "③", _KILL_NAME,
-            "--runs-dir 와 --treatment-glob/--control-glob 이 필요하다", kill=True,
+            "③", name,
+            "--runs-dir 와 --treatment-glob/--control-glob 이 필요하다", kill=kill,
         )
     treatment = collect_seed_accuracy(runs_dir, treatment_glob)
     control = collect_seed_accuracy(runs_dir, control_glob)
     if len(treatment) < th.min_seeds or len(control) < th.min_seeds:
         return _unavailable(
-            "③", _KILL_NAME,
+            "③", name,
             f"시드가 부족하다 (처치 {len(treatment)}개, 대조 {len(control)}개, "
             f"조건당 {th.min_seeds}개 필요)",
-            kill=True,
+            kill=kill,
         )
-    return gate_beats_baseline(
+    result = gate_beats_baseline(
         treatment, control, th.alpha, th.min_effect_size, th.min_difference
+    )
+    if kill:
+        return result
+    # 기준선: 수치는 그대로, 킬 스위치 표시만 뗀다. 술어를 바꾸지 않으므로
+    # 1단 수치를 2단과 같은 형식으로 나란히 놓을 수 있다.
+    return GateResult(
+        gate_id=result.gate_id, name=name, passed=result.passed,
+        detail=result.detail, is_kill_switch=False,
+        evaluated=result.evaluated, evidence=result.evidence,
     )
 
 
@@ -160,6 +183,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     # ④의 ε 은 설정의 termination.eps 와 같은 값이어야 한다. Δ 정의가 v2.1 에서
     # 바뀌었고(F-024) ADR-017 이 상태를 RMS 1 에 묶었으므로 v1 의 1e-3 은 무의미하다.
     ap.add_argument("--eps", type=float, default=0.1, help="게이트 ④의 수렴 임계값")
+    ap.add_argument(
+        "--stage", choices=("baseline", "kill"), default="kill",
+        help="③의 역할. baseline=1단(Phase A, 측정만) / kill=2단(Phase B, 킬 스위치). ADR-016",
+    )
     ap.add_argument("--json", type=Path, help="판정 결과를 기계 판독용 JSON 으로 저장")
     args = ap.parse_args(argv)
 
@@ -171,7 +198,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     results = [
         evaluate_collapse(inputs, th),
         evaluate_anytime(inputs, th),
-        evaluate_kill_switch(args.runs_dir, args.treatment_glob, args.control_glob, th),
+        evaluate_kill_switch(
+            args.runs_dir, args.treatment_glob, args.control_glob, th, stage=args.stage
+        ),
         evaluate_delta(inputs, args.eps, th),
     ]
     report = build_report(PHASE_0, results)
