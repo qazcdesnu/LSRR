@@ -301,3 +301,65 @@ def test_state_norm_defaults_to_on():
     """ADR-017 의 기본값. 끄려면 설정에 명시해야 한다."""
     engine = EngineWrapper(core=nn.Identity(), d_model=D)
     assert engine.state_norm is not None
+
+
+# ------------------------------------------ ADR-017 개정: 혼합 전 코어 출력 정규화
+
+
+class _Huge(nn.Module):
+    """출력이 상태보다 10⁷ 배 큰 코어 — 학습이 실제로 만든 상황이다 (F-035)."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return torch.roll(x, 1, dims=-1) * 1e7
+
+
+def _delta(engine, R, R0, m=0):
+    return float((engine.forward_step(R, R0, m) - R).abs().mean())
+
+
+def test_damping_is_dead_without_mix_norm():
+    """상태만 정규화하면 (1−α)R + αf ≈ αf 라 α 가 계산에서 사라진다 (F-035).
+
+    실측: ‖f‖/‖R‖ = 10⁷~10⁸, 혼합 중 (1−α)R 비중 0.0%. α 를 바꿔도 Δ 궤적이
+    소수점 셋째 자리까지 같았다 — §4.2 의 감쇠가 구현에서 작동한 적이 없다.
+    """
+    R = torch.randn(B, L, D); R0 = R.clone()
+    d = {}
+    for a in (0.8, 0.3):
+        e = _engine(_Huge(), alpha=a, state_norm="rmsnorm"); e.mix_norm = False
+        d[a] = _delta(e, R, R0)
+    assert d[0.8] == pytest.approx(d[0.3], rel=1e-4), "α 가 죽어 있어야 이 테스트가 재현된다"
+
+
+def test_mix_norm_makes_damping_effective():
+    """코어 출력을 먼저 상태 스케일로 맞추면 α 가 §4.2 의 뜻을 되찾는다."""
+    R = torch.randn(B, L, D); R0 = R.clone()
+    d = {}
+    for a in (0.8, 0.3):
+        e = _engine(_Huge(), alpha=a, state_norm="rmsnorm"); e.mix_norm = True
+        d[a] = _delta(e, R, R0)
+    assert d[0.3] < d[0.8] * 0.6, f"α 를 낮췄는데 Δ 가 줄지 않았다: {d}"
+
+
+def test_mix_norm_defaults_off_in_code_and_on_in_base_config():
+    """생성자 기본값은 False — 키 없는 옛 스냅샷이 학습 시점 거동을 재현해야 한다.
+
+    새 런은 base.yaml 이 켠다. 이 둘이 뒤바뀌면 F-035 이전 체크포인트를
+    재평가할 때 조용히 다른 갱신식이 돈다.
+    """
+    from lsrr.config import load_config
+    from lsrr.config.schema import get_path
+
+    assert _engine(nn.Identity(), state_norm="rmsnorm").mix_norm is False
+    assert get_path(load_config(["exp=exp/prosqa_gpt2"]), "engine.mix_norm") is True
+    # 상태 정규화가 없으면 맞출 스케일이 없다 — 조용히 꺼진다.
+    e = EngineWrapper(core=nn.Identity(), d_model=D, state_norm="none", mix_norm=True)
+    assert e.mix_norm is False
+
+
+def test_mix_norm_off_reproduces_the_old_update():
+    """F-035 이전 체크포인트는 mix_norm=false 로 적재해야 학습 시점 거동이 재현된다."""
+    R = torch.randn(B, L, D); R0 = R.clone()
+    old = _engine(_Huge(), alpha=0.8, state_norm="rmsnorm"); old.mix_norm = False
+    f = old.state_norm(_Huge()(R))  # 옛 갱신식 = Norm(f) 그 자체
+    assert torch.allclose(old.forward_step(R, R0, 0), f, atol=1e-4)

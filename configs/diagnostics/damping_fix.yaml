@@ -1,0 +1,23 @@
+# 진단 — 감쇠를 살린 갱신식으로 SSM 이 수렴하는가 (F-035 → ADR-017 개정)
+#
+# **게이트 재판정이 아니다.** 킬 스위치(F-034) 이후 재검토의 첫 실험이며, 대조군
+# 비교를 하지 않고 수렴 지표만 잰다: ε 안착 시드 비율(F-032: 2/5), anytime
+# 기울기, grad_norm 스파이크. 정확도는 기록만 한다.
+#
+# 바뀌는 것은 정확히 둘이다 — 나머지는 1단 dynamic_m 과 동일:
+#   engine.mix_norm: true   (기본. 코어 출력을 혼합 전에 상태 스케일로 맞춘다)
+#   engine.damping_alpha: 0.5  (같은 체크포인트 평가 시점 교체에서 4/5 안착. 0.3 은 과감쇠)
+defaults: [exp/prosqa_gpt2]
+
+engine:
+  damping_alpha: 0.5
+  mix_norm: true
+
+train:
+  epochs: 5
+  bs: 8
+  lr: 1.0e-3
+  log_every: 200
+
+sweep:
+  seed: [0, 1, 2]

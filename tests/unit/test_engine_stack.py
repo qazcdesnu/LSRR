@@ -73,3 +73,22 @@ def test_ssm_engines_stay_finite_over_many_cycles(engine_type):
             R = engine.forward_step(R, R0, m)
     assert torch.isfinite(R).all()
     assert float(R.detach().pow(2).mean().sqrt()) == pytest.approx(1.0, abs=0.05)
+
+
+# ---------------------------------------- 설정 키가 래퍼까지 닿는가 (F-028·F-035)
+
+
+@pytest.mark.parametrize("engine_type", ["hydra_qs", "mamba_up", "bidir_add", "attn_block", "mlp_onepass"])
+def test_engine_config_keys_reach_the_wrapper(engine_type):
+    """빌더가 `**_` 로 모르는 키를 삼키면 설정은 그대로인데 다른 실험이 돈다.
+
+    F-035 에서 `engine.mix_norm: true` 가 base.yaml 에 있었는데 조립된 엔진은
+    False 였다. `state_norm` 도 같은 경로였다 — 그동안 설정값이 아니라 래퍼
+    기본값이 돌았다.
+    """
+    e = ENGINE_REGISTRY.build({"type": engine_type, "d_model": D, "d_state": 8,
+                               "state_norm": "layernorm", "mix_norm": True,
+                               "damping_alpha": 0.37})
+    assert e.state_norm_type == "layernorm"
+    assert e.mix_norm is True
+    assert e.damping_alpha == pytest.approx(0.37)

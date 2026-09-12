@@ -27,6 +27,9 @@ engine:
   # 갱신 뒤 상태 정규화 (ADR-017). none 이면 상태 RMS 가 학습 250스텝 만에
   # 10¹⁴ 배로 가고 Δ<ε 이 무의미해진다 (F-028). none 이 v2.1 원문 거동이다.
   state_norm: rmsnorm
+  # 혼합 전 코어 출력 정규화 (ADR-017 개정, F-035). 없으면 ‖f‖ 이 ‖R‖ 의 10⁷~10⁸
+  # 배가 되어 감쇠 α 가 계산에서 사라진다 — §4.2 의 감쇠 갱신이 작동한 적이 없었다.
+  mix_norm: true
   reinject_r0: gate     # R⁰ 재주입
   cycle_embedding: true # 사이클 임베딩
 

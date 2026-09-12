@@ -155,6 +155,8 @@ def _build_directional(direction: Direction, **kwargs: Any) -> EngineWrapper:
         cycle_embedding=bool(kwargs.get("cycle_embedding", True)),
         reinject_r0=kwargs.get("reinject_r0", "gate"),
         norm_type=kwargs.get("norm_type", "rmsnorm"),
+        state_norm=kwargs.get("state_norm", "rmsnorm"),
+        mix_norm=bool(kwargs.get("mix_norm", False)),
     )
 
 

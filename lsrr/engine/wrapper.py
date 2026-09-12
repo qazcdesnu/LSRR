@@ -80,6 +80,7 @@ class EngineWrapper(BaseRefinementEngine):
         reinject_r0: ReinjectMode = "gate",
         norm_type: str = "rmsnorm",
         state_norm: StateNorm = "rmsnorm",
+        mix_norm: bool = False,
         **_: Any,
     ) -> None:
         super().__init__()
@@ -117,6 +118,12 @@ class EngineWrapper(BaseRefinementEngine):
         self.state_norm = (
             None if state_norm == "none" else _ScaleOnly(state_norm)
         )
+        # 혼합 **전에** 코어 출력을 상태와 같은 스케일로 맞춘다 (ADR-017 개정, F-035).
+        # 상태만 정규화하면 코어 출력 스케일이 자유로워져 (1−α)R + αf ≈ αf 가 되고
+        # α 가 계산에서 사라진다 — 실측 ‖f‖/‖R‖ = 10⁷~10⁸.
+        # 생성자 기본값은 False 다: 이 키가 없는 옛 스냅샷(F-035 이전 런)을 재평가할
+        # 때 학습 시점 거동이 재현돼야 한다. 새 런은 base.yaml 이 켠다.
+        self.mix_norm = bool(mix_norm) and self.state_norm is not None
 
     def forward_step(
         self, R_m: torch.Tensor, R0: torch.Tensor, m: int
@@ -139,6 +146,8 @@ class EngineWrapper(BaseRefinementEngine):
             x = (1.0 - g) * x + g * R0
 
         f = self.core(self.norm(x))
+        if self.mix_norm:
+            f = self.state_norm(f)
         R_next = (1.0 - self.damping_alpha) * R_m + self.damping_alpha * f
         # 갱신 **뒤** 정규화 (ADR-017). 없으면 Δ 가 학습 중 자릿수를 바꿔
         # §4.3 의 고정 ε 이 무의미해지고, β = softmax(w_pool·r_l) 가 포화한다.
@@ -148,7 +157,7 @@ class EngineWrapper(BaseRefinementEngine):
         return (
             f"d_model={self.d_model}, alpha={self.damping_alpha}, "
             f"reinject={self.reinject_r0}, cycle_emb={self.cycle_emb is not None}, "
-            f"state_norm={self.state_norm_type}"
+            f"state_norm={self.state_norm_type}, mix_norm={self.mix_norm}"
         )
 
 

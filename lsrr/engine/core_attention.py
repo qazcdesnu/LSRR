@@ -80,6 +80,8 @@ def build_attn_block(
     cycle_embedding: bool = True,
     reinject_r0: str = "gate",
     norm_type: str = "rmsnorm",
+    state_norm: str = "rmsnorm",
+    mix_norm: bool = False,
     **_: Any,
 ) -> EngineWrapper:
     """레지스트리 진입점.
@@ -112,6 +114,8 @@ def build_attn_block(
         cycle_embedding=cycle_embedding,
         reinject_r0=reinject_r0,
         norm_type=norm_type,
+        state_norm=state_norm,
+        mix_norm=mix_norm,
     )
 
 

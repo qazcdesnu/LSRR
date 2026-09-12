@@ -62,6 +62,8 @@ def build_mlp_onepass(
     cycle_embedding: bool = True,
     reinject_r0: str = "gate",
     norm_type: str = "rmsnorm",
+    state_norm: str = "rmsnorm",
+    mix_norm: bool = False,
     **kwargs: Any,
 ) -> EngineWrapper:
     """레지스트리 진입점. 코어를 래퍼로 감싸 §4.2 갱신식을 적용한다.
@@ -81,6 +83,8 @@ def build_mlp_onepass(
         cycle_embedding=cycle_embedding,
         reinject_r0=reinject_r0,
         norm_type=norm_type,
+        state_norm=state_norm,
+        mix_norm=mix_norm,
     )
 
 
