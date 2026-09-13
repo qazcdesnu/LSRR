@@ -44,22 +44,29 @@ def cosine_schedule_with_warmup(
     num_training_steps: int,
     min_lr: float = 1e-5,
 ) -> torch.optim.lr_scheduler.LambdaLR:
-    """1-cycle half-cosine (Mamba-2 레시피).
+    """1-cycle half-cosine (Mamba-2 레시피). 파라미터 그룹마다 람다를 따로 둔다.
+
+    그룹의 기준 lr 이 다르면(공동 학습: 엔진 3e-4, LoRA 1e-4) 하나의 배율로는
+    `min_lr` 하한이 한 그룹에만 맞는다 — 첫 그룹 기준으로 잡으면 LoRA 의 하한이
+    3.3e-6 이 된다. 그룹별로 `min_lr / base_lr` 을 계산한다.
 
     이식: v1.0:lsrr/training/trainer.py:get_cosine_schedule_with_warmup
     """
-    base_lr = optimizer.param_groups[0]["lr"]
-    min_ratio = float(min_lr) / float(base_lr) if base_lr > 0 else 0.0
+    def make(base_lr: float):
+        min_ratio = float(min_lr) / float(base_lr) if base_lr > 0 else 0.0
 
-    def lr_lambda(step: int) -> float:
-        if step < num_warmup_steps:
-            return step / max(1, num_warmup_steps)
-        total = max(1, num_training_steps - 1 - num_warmup_steps)
-        progress = min(max((step - num_warmup_steps) / total, 0.0), 1.0)
-        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
-        return min_ratio + (1.0 - min_ratio) * cosine
+        def lr_lambda(step: int) -> float:
+            if step < num_warmup_steps:
+                return step / max(1, num_warmup_steps)
+            total = max(1, num_training_steps - 1 - num_warmup_steps)
+            progress = min(max((step - num_warmup_steps) / total, 0.0), 1.0)
+            cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+            return min_ratio + (1.0 - min_ratio) * cosine
 
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        return lr_lambda
+
+    lambdas = [make(g["lr"]) for g in optimizer.param_groups]
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lambdas)
 
 
 class Trainer:
@@ -80,6 +87,7 @@ class Trainer:
         cfg: Any,
         device: Optional[torch.device] = None,
         params: Optional[Sequence[nn.Parameter]] = None,
+        param_groups: Optional[Sequence[dict[str, Any]]] = None,
         lr: Optional[float] = None,
         epochs: Optional[int] = None,
         phase: Optional[str] = None,
@@ -113,8 +121,11 @@ class Trainer:
                 "학습 가능한 파라미터가 없다. 어댑터·엔진·융합 헤드가 조립되었는지 "
                 "확인하라 (제안서 §5)."
             )
+        # 그룹별 lr 이 주어지면 AdamW 파라미터 그룹으로 넘긴다. 그룹의 lr 은 스케줄러의
+        # 배율(워밍업·코사인)을 각자의 기준값에 대해 받는다.
         self.optimizer = torch.optim.AdamW(
-            self.params, lr=self.lr, weight_decay=self.weight_decay
+            list(param_groups) if param_groups else self.params,
+            lr=self.lr, weight_decay=self.weight_decay,
         )
         self.scheduler: Optional[torch.optim.lr_scheduler.LambdaLR] = None
         self.global_step = 0

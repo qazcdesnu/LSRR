@@ -142,3 +142,48 @@ def test_overlapping_attributes_are_not_double_counted():
     expected = sum(p.numel() for p in {id(p): p for p in
                    list(model.pipeline.parameters()) + list(model.pooler.parameters())}.values())
     assert out["by_group"]["memory"] == expected
+
+
+# ------------------------------------------------- 그룹별 lr (Ablation E 공동 학습)
+
+
+def test_lr_groups_become_optimizer_param_groups():
+    """엔진 3e-4·LoRA 1e-4 를 한 lr 로 묶으면 레시피가 교락된다."""
+    enc = _Encoder(n=2)
+    out = apply_phase(_Model(), enc, PhaseSpec("J", 1, 3e-4, ("engine", "emitter", "lora"), True,
+                                                lr_groups=(("lora", 1e-4),)))
+    groups = {g["name"]: g for g in out["param_groups"]}
+    assert set(groups) == {"engine", "emitter", "lora"}
+    assert groups["lora"]["lr"] == pytest.approx(1e-4)
+    assert "lr" not in groups["engine"]          # 기본 lr 을 따른다
+    ids = [id(p) for g in out["param_groups"] for p in g["params"]]
+    assert len(ids) == len(set(ids))             # 그룹 간 중복 없음
+
+
+def test_lr_group_for_untrained_group_is_rejected():
+    with pytest.raises(ConfigError, match="lr_groups"):
+        PhaseSpec("J", 1, 3e-4, ("engine",), lr_groups=(("lora", 1e-4),))
+
+
+def test_phases_from_cfg_reads_lr_groups():
+    cfg = OmegaConf.create({"train": {"epochs": 1, "lr": 3e-4, "phases": [
+        {"name": "J", "epochs": 10, "trainable": ["engine", "memory", "emitter", "lora"],
+         "lr_groups": {"lora": 1.0e-4}},
+    ]}})
+    (spec,) = phases_from_cfg(cfg)
+    assert spec.lr_groups == (("lora", 1e-4),) and spec.attach_lora
+
+
+def test_scheduler_floors_each_group_at_min_lr():
+    """첫 그룹 기준 배율 하나면 두 번째 그룹의 하한이 어긋난다."""
+    import torch
+    from lsrr.runtime.trainer import cosine_schedule_with_warmup
+
+    a, b = nn.Linear(2, 2), nn.Linear(2, 2)
+    opt = torch.optim.AdamW([{"params": a.parameters(), "lr": 3e-4},
+                             {"params": b.parameters(), "lr": 1e-4}], lr=3e-4)
+    sch = cosine_schedule_with_warmup(opt, num_warmup_steps=1, num_training_steps=10, min_lr=1e-5)
+    for _ in range(12):
+        opt.step(); sch.step()
+    assert opt.param_groups[0]["lr"] == pytest.approx(1e-5, rel=1e-3)
+    assert opt.param_groups[1]["lr"] == pytest.approx(1e-5, rel=1e-3)

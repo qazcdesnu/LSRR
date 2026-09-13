@@ -1,0 +1,57 @@
+# Ablation E — 순차(2-phase) vs 공동 학습 (v2.1 §7.1-2, REVIEW_v2.2 §1 §5.0)
+#
+# 물음: 2원화(엔진 → LoRA 순차)가 엔진과 수신기의 공적응을 막아 결과를 눌렀는가.
+# 엔진·메모리·방출기·LoRA 를 **처음부터 함께** 학습한다. LoRA 는 여전히 디코딩
+# 전용(I9)이므로 엔진 입력(H_last)은 base 다 — 그 제약까지 푸는 것은 별개 실험.
+#
+# **대조군을 같은 예산으로 함께 돌린다.** 공동 학습은 LoRA 가 10 epoch 을 받아
+# 2-phase(5 epoch)보다 유리하다. No-CoT(pause) 를 같은 공동 레시피로 돌려야
+# F-038 의 0.660 이 아니라 그 값과 비교된다.
+#
+# 그룹별 lr: 엔진 계열 3e-4 (F-037), LoRA 1e-4 (2단·F-037 Phase B). 한 lr 로 묶으면
+# 레시피가 교락된다.
+#
+# 예측 (REVIEW_v2.2): 공동 학습 단독으로는 No-CoT 를 넘지 못한다 — 엔진 입력의
+# 공유 성분(F-040)과 답 하나짜리 손실(F-038)은 공동 학습이 건드리지 않는다.
+# 틀리면 §5.0 판정이 바뀐다.
+defaults: [base, backbone/gpt2, data/prosqa]
+
+backbone:
+  lora: {r: 8, alpha: 16, dropout: 0.0, target_modules: [c_attn, c_proj]}
+
+memory:
+  adapter: {d_model: 256}
+
+engine: {type: hydra_qs, d_state: 16, n_blocks: 2}
+
+recurrence:
+  schedule: {type: lognormal, mean: 5, max: 8}
+  tbptt_k: 4
+
+termination: {type: delta_state, m_min: 1, m_max: 8}
+
+readout:
+  path: {emission: trajectory, max_new_tokens: 12}
+  fusion: {anchor: first}
+
+train:
+  bs: 16
+  log_every: 100
+  phases:
+    - name: J
+      epochs: 10
+      lr: 3.0e-4
+      trainable: [engine, memory, emitter, lora]
+      lr_groups: {lora: 1.0e-4}
+
+eval: {max_new_tokens: 12}
+
+sweep:
+  condition:
+    - name: dynamic_m
+      readout.fusion.type: attention_pooling
+      readout.path.emission: trajectory
+    - name: nocot_pause
+      readout.fusion.type: pause
+      readout.path.emission: single
+  seed: [0, 1, 2]

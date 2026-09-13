@@ -69,6 +69,9 @@ class PhaseSpec:
     lr: float
     trainable: tuple[str, ...]
     attach_lora: bool = False
+    #: 그룹별 lr 재정의. 공동 학습(Ablation E)에서 엔진(3e-4)과 LoRA(1e-4)를 한
+    #: lr 로 묶으면 레시피가 교락된다 — 각자 검증된 값을 유지한다.
+    lr_groups: tuple[tuple[str, float], ...] = ()
 
     def __post_init__(self) -> None:
         unknown = [g for g in self.trainable if g not in VALID_GROUPS]
@@ -79,6 +82,11 @@ class PhaseSpec:
             )
         if self.epochs < 1:
             raise ConfigError(f"페이즈 '{self.name}' 의 epochs 는 1 이상이어야 한다.")
+        for g, _ in self.lr_groups:
+            if g not in self.trainable:
+                raise ConfigError(
+                    f"페이즈 '{self.name}' 의 lr_groups 에 학습 대상이 아닌 그룹 '{g}' 이 있다."
+                )
         if LORA_GROUP in self.trainable and not self.attach_lora:
             raise ConfigError(
                 f"페이즈 '{self.name}' 이 lora 를 학습 대상으로 두면서 "
@@ -111,6 +119,7 @@ def apply_phase(
 
     params: list[nn.Parameter] = []
     by_group: dict[str, int] = {}
+    group_lists: dict[str, list[nn.Parameter]] = {}
 
     for group in spec.trainable:
         if group == LORA_GROUP:
@@ -122,6 +131,7 @@ def apply_phase(
             p.requires_grad_(True)
         params.extend(group_params)
         by_group[group] = sum(p.numel() for p in group_params)
+        group_lists[group] = group_params
 
     if spec.attach_lora and encoder is not None:
         if not getattr(encoder, "has_lora", False):
@@ -136,6 +146,7 @@ def apply_phase(
         if train_lora:
             params.extend(lora_params)
             by_group[LORA_GROUP] = sum(p.numel() for p in lora_params)
+            group_lists[LORA_GROUP] = list(lora_params)
 
     # 그룹끼리도 겹칠 수 있으므로 마지막에 한 번 더 거른다.
     params = _unique(params)
@@ -144,8 +155,23 @@ def apply_phase(
             f"페이즈 '{spec.name}' 에 학습할 파라미터가 하나도 없다 "
             f"(trainable={spec.trainable})."
         )
+    # 옵티마이저 파라미터 그룹. lr 재정의가 없는 그룹은 lr 을 넣지 않아 Trainer 의
+    # 기본 lr 을 따른다. 같은 파라미터가 두 그룹에 들어가지 않도록 id 로 거른다.
+    lr_of = dict(spec.lr_groups)
+    seen: set[int] = set()
+    param_groups: list[dict[str, Any]] = []
+    for g, plist in group_lists.items():
+        plist = [p for p in plist if id(p) not in seen]
+        seen.update(id(p) for p in plist)
+        if not plist:
+            continue
+        entry: dict[str, Any] = {"params": plist, "name": g}
+        if g in lr_of:
+            entry["lr"] = float(lr_of[g])
+        param_groups.append(entry)
     return {
         "params": params,
+        "param_groups": param_groups,
         "by_group": by_group,
         "total": sum(p.numel() for p in params),
     }
@@ -183,6 +209,7 @@ def phases_from_cfg(cfg: Any) -> list[PhaseSpec]:
         trainable = node.get("trainable")
         if trainable is None:
             raise ConfigError(f"train.phases[{i}] 에 trainable 이 없다.")
+        lr_groups = tuple((str(k), float(v)) for k, v in dict(node.get("lr_groups") or {}).items())
         specs.append(
             PhaseSpec(
                 name=str(node.get("name", chr(ord("A") + i))),
@@ -190,6 +217,7 @@ def phases_from_cfg(cfg: Any) -> list[PhaseSpec]:
                 lr=float(node.get("lr", _get(cfg, "train.lr", 3e-4))),
                 trainable=tuple(trainable),
                 attach_lora=bool(node.get("attach_lora", LORA_GROUP in trainable)),
+                lr_groups=lr_groups,
             )
         )
     return specs

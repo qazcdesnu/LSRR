@@ -145,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
             if not stages:
                 trainer = Trainer(
                     model, bundle.objective, tracker, cfg, device=device,
-                    params=groups["params"], lr=phase.lr, epochs=phase.epochs,
+                    params=groups["params"], param_groups=groups["param_groups"], lr=phase.lr, epochs=phase.epochs,
                     phase=phase.name if multi else None,
                 )
                 r = trainer.fit(loader)
@@ -170,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
                 info = apply_stage(bundle.runner, cfg, st)
                 trainer = Trainer(  # 새 Trainer = 옵티마이저·스케줄러 리셋
                     model, bundle.objective, tracker, cfg, device=device,
-                    params=groups["params"], lr=phase.lr, epochs=st.epochs,
+                    params=groups["params"], param_groups=groups["param_groups"], lr=phase.lr, epochs=st.epochs,
                     phase=f"{phase.name}_{st.name}",
                 )
                 r = trainer.fit(stage_loader)
