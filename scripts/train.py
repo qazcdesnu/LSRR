@@ -91,6 +91,29 @@ def main(argv: list[str] | None = None) -> int:
 
     spec = prompt_spec_from_cfg(cfg)
     encoder = PromptEncoder(bundle.encoder.tokenizer, spec)
+
+    # 고정 중심화 (ADR-019): 학습셋 층 상태의 평균을 한 번 추정해 버퍼에 넣는다.
+    # 학습 가능한 오프셋이 아니다 — 손실이 답만 보는 한 공유 성분을 지울 압력이 없다.
+    center_meta = None
+    if getattr(model.pipeline, "center", "none") == "train_mean":
+        n_est = int(get_path(cfg, "memory.center_samples", 1024))
+        H_last, H_pool = [], []
+        model.eval()
+        with torch.no_grad():
+            for b in make_loader(bundle.data.get_split("train")[:n_est], encoder,
+                                 batch_size=int(get_path(cfg, "train.bs", 16)), shuffle=False):
+                b = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in b.items()}
+                model.encode_counter.reset()
+                ctx = model.encode(b["input_ids"], b.get("attention_mask"))
+                H_last.append(ctx.H_last.detach().cpu())
+                if ctx.H_pool is not None:
+                    H_pool.append(ctx.H_pool.detach().cpu())
+        center_meta = model.pipeline.estimate_center(
+            torch.cat(H_last), torch.cat(H_pool) if H_pool else None
+        )
+        print(f"중심화: 학습셋 {int(center_meta['num_samples'])}개 평균 — 샘플 간 코사인 "
+              f"{center_meta['cosine_before']:.4f} → {center_meta['cosine_after']:.4f}")
+
     loader = make_loader(
         bundle.data.get_split("train"),
         encoder,
@@ -113,6 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             batch_size=int(get_path(cfg, "train.bs", 16)),
             device=str(device),
             init_from=init_meta,
+            center=center_meta,
         )
         print(
             f"학습 파라미터 {params['total']:,} / 백본 {backbone_n:,} "

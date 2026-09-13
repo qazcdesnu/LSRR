@@ -193,7 +193,10 @@ def build_slots(
     from lsrr.memory import LayerMemoryPipeline
 
     bundle.pipeline = LayerMemoryPipeline(
-        composer=bundle.composer, scope=bundle.scope, adapter=bundle.adapter
+        composer=bundle.composer, scope=bundle.scope, adapter=bundle.adapter,
+        center=str(get_path(cfg, "memory.center", "none")),
+        d_in=d_in,
+        num_layers=num_layers,
     )
 
     # 사이클 러너: 엔진 + 스케줄 + 종료 규칙
