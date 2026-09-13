@@ -851,6 +851,44 @@ seed 0 은 단조 감소한다. seed 1 은 **오르내린다**(0.90 → 0.48 →
 
 ---
 
+### F-039 · 커리큘럼도 No-CoT 를 넘지 못한다 — 동결 백본은 옮길 언어 추론이 없다
+
+**측정:** `exp/prosqa_curriculum` — §5.1 그대로 S1(M=1, CoT 전체) → S2.1…S2.6(앞 k 단계 제거, M=k+1) → S3(완전 잠재, 동적 M), 2 epoch/스테이지·S3 3 epoch, 그 위에 Phase B. F-037 레시피, 1시드.
+
+| | Phase A | Phase B | anytime(B) |
+|---|---|---|---|
+| 커리큘럼 (`dynamic_m`) | **0.6067** | 0.6533 | 0.630 → **0.673**(m1) → 0.663 … 0.653 |
+| 콜드 스타트 (F-037) | 0.576 | 0.6533 | 0.610 → 0.650 … |
+| No-CoT (F-038) | 0.569 | **0.6600** | — |
+
+**Phase A 는 3%p 올랐고, Phase B 에서 그 이득이 사라진다.** 커리큘럼이 동결 수신기 조건에서는 무언가를 했지만, LoRA 가 붙으면 콜드 스타트와 같은 곳(0.653)에 모이고 No-CoT(0.660)를 넘지 못한다. anytime 의 m1=0.673 은 No-CoT 를 넘는 유일한 점이나 단일 시드의 단일 점이다.
+
+**스테이지가 실제로 무엇을 배웠는가 — 생성을 보면 안다.**
+
+```
+S1 (M=1, CoT 전체 감독)
+  정답: Tom is a terpus. | Every terpus is a brimpus. | Every brimpus is a lempus. → Tom is a lempus.
+  생성: Tom is a terpus. Every terpus is a boompus. Every boompus is a timpus. Every timpus is a boompus.
+        Tom is a dumpus. … Is Tom a lempus or scrompus? Yes, Tom is a dumpus. No, Tom is a dumpus.
+S2.3 (앞 3단계 제거, M=4)   생성: Tom is a lempus.            (답으로 직행, 이건 정답)
+S2.6 / S3                    생성: Sally is a fompus.          (오답)
+```
+
+**S1 의 CoT 는 환각이다.** 첫 단계만 맞고 존재하지 않는 간선을 지어낸다 — Coconut 이 언어 CoT 의 실패 양상으로 적은 것("hallucinates non-existent edges")과 정확히 같다. 이유는 단순하다: **Phase A 에서 백본이 얼어 있다.** 동결 GPT-2 는 ProsQA 추론을 언어로 할 수 없고, 방출기 하나(h⁽¹⁾)를 학습시켜 그것을 시키는 것은 불가능한 과제다. 커리큘럼은 "언어로 하는 추론"을 잠재 토큰이 **점진적으로 흡수**하는 것인데, 흡수할 언어 추론이 애초에 없다.
+
+**Coconut 과의 차이가 여기서 결정적이다.** Coconut 은 Stage 0 에서 백본을 CoT 로 먼저 미세조정한다 — 언어 추론이 **먼저** 생기고, 그 다음 단계별로 잠재화한다. 제안서 §5.1 은 그 Stage 0 을 **Phase B** 에 두었다("LoRA CoT baseline warmup"). 순서가 뒤집혀 있다: 잠재화 커리큘럼(Phase A)이 CoT 워밍업(Phase B)보다 먼저다. 그리고 그 워밍업을 Phase A 앞으로 옮기면 커리큘럼 동안 LoRA 가 살아 있어야 하므로 "Phase A 는 동결 백본" 이라는 2원화의 전제가 깨진다.
+
+**S3 의 수렴도 안 됐다.** Δ 0.425 → 0.452 → 0.320 → … → 0.147, ε 안착 0%. 14 epoch 을 고정 M 으로 학습한 뒤 3 epoch 의 동적 학습으로는 수축 사상을 못 배운다. 고정-M 스테이지는 수렴을 훈련하지 않는다 — F-036 의 3/3 수렴은 처음부터 동적 규칙으로 학습한 경우였다.
+
+**함의:**
+1. **§5.1 의 커리큘럼은 §5.0 의 2원화와 양립하지 않는다.** 커리큘럼은 언어 추론이 가능한 수신기를 전제하고, Phase A 는 그것을 금지한다. 둘 중 하나를 바꿔야 한다.
+2. F-038 의 "엔진이 아무것도 얹지 못한다" 는 커리큘럼으로도 풀리지 않았다. 원인이 학습 신호만이 아니라는 뜻이며, §4.1(층 상태 메모리의 샘플 불변성, F-030)이 남는다.
+3. 이 결과는 1시드·짧은 스테이지(Coconut 의 5 vs 우리 2 epoch)라 정확도 수치 자체는 약하다. 그러나 **S1 이 환각 CoT 를 생성한다는 것**은 에폭을 늘려 풀리는 문제가 아니다 — 동결 백본의 성질이다.
+
+**재현:** `python scripts/sweep.py exp=exp/prosqa_curriculum`. 스테이지 생성 확인은 `phase_A_S1.pt` 를 `cot_keep_from=0`·`max_new_tokens=96` 으로 생성.
+
+---
+
 ## 참고 기준선
 
 | 항목 | 값 | 조건 |
