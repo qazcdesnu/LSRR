@@ -85,7 +85,7 @@
 | ②-a 순서 교체 | Phase 0: LoRA 로 CoT-SFT (언어 추론 확보) → Phase A': LoRA 동결·엔진 학습 + 커리큘럼 → Phase B: LoRA 재정렬 | 2원화 귀속이 "동결 base vs LoRA" 가 아니라 "CoT-LoRA 고정 vs 재정렬" 로 바뀜. 여전히 분해 가능 |
 | ②-b 깊은 감독 | 사이클 m 의 판독을 CoT 단계 m 에 맞춘다 (`objective.deep_supervision`, 이미 구현) | 스텝-토큰 1:1 대응을 가정 — §5.1 은 이를 명시적으로 부정했다. 재검토 필요 |
 | ②-c 증류 | CoT-SFT 된 교사의 은닉 상태를 잠재 토큰이 맞추게 (CODI 방식) | 교사 모델 필요. CODI 가 GPT-2 GSM8k 43.7 로 가장 강함 |
-| ②-d 공동 학습 | Phase C 를 기본으로 (엔진+LoRA 동시) | 귀속을 잃음. Ablation E 로만 |
+| ②-d 공동 학습 | Phase C 를 기본으로 (엔진+LoRA 동시) | 귀속을 잃음. **Ablation E 진행 중** (`ablation/E_joint`, 2026-09-13 12:37): dynamic_m vs 같은 예산의 No-CoT, 3시드. 예측: No-CoT 를 넘지 못한다 — 엔진 입력의 공유 성분(F-040)과 답 하나짜리 손실은 공동 학습이 건드리지 않는다. 틀리면 §5.0 판정을 바꾼다 |
 
 ②-a 가 제안서 정신을 가장 덜 바꾸면서 F-039 를 직접 푼다.
 
