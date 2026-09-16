@@ -15,7 +15,7 @@
 | `interfaces.py` | 전 슬롯의 추상 기반 클래스 | 계획 |
 | `types.py` | 컴포넌트 간 데이터 타입 (dataclass) | 계획 |
 | `registry.py` | 범용 레지스트리 + 슬롯별 인스턴스 | 계획 |
-| `invariants.py` | I1–I8 실행 시 단언 헬퍼 | 계획 |
+| `invariants.py` | I1–I9 실행 시 단언 헬퍼 | 계획 |
 | `errors.py` | 타입 예외 | 계획 |
 
 ## 핵심 계약
@@ -54,7 +54,7 @@
 `ContextBundle`이 `backbone`과 `memory`가 서로를 모른 채 대화하는 유일한 통로다. 새 순환 의존이 필요해 보이면 여기에 필드가 빠진 것이다.
 
 ### 불변식 단언 (`invariants.py`)
-`ARCHITECTURE.md` §4의 I1–I8을 실행 시 검사하는 헬퍼. 위반은 **경고가 아니라 예외**다.
+`ARCHITECTURE.md` §4의 I1–I9을 실행 시 검사하는 헬퍼. 위반은 **경고가 아니라 예외**다.
 - `EncodeCounter` — 샘플 배치당 백본 인코딩 횟수 추적 (I2)
 - `assert_frozen(module)` / `weight_hash(module)` (I1)
 - `assert_same_instance(readout_calls)` (I3)

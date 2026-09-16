@@ -2,7 +2,7 @@
 
 > **문서 지위:** 이 문서는 LSRR 코드베이스의 최상위 설계 문서다. `documents/Research_Proposal_v2.1.md`(무엇을 주장하는가)와 각 폴더의 `README.md`(각 부품이 무엇을 하는가) 사이를 잇는다.
 > 충돌 시 우선순위: `Research_Proposal_v2.1.md` > `DESIGN_DECISIONS.md`(ADR) > `ARCHITECTURE.md` > 폴더별 `README.md` > 코드.
-> **최종 갱신:** 2026-09-10 · **상태:** 설계 확정, 구현 미착수
+> **최종 갱신:** 2026-09-16 · **상태:** M0–M5 구현 완료, Phase 0 게이트 판정 완료(③ FAIL, 킬 스위치 발동 — F-034). **§1 P2(레이어 축 스캔 / 사이클 축 반복)와 §2 의 사이클 재귀는 재검토 중** — REVIEW_v2.2 뿌리 ③: 사이클 재귀에 입력이 없어 자율계로 수축하고, 층 축 스캔은 질문의 다른 위치를 읽지 못한다 (F-041). 이 문서는 **현재 구현**을 기술하며, 재설계는 그 ADR 이 확정된 뒤 반영한다.
 
 ---
 
@@ -16,7 +16,8 @@
 | `documents/DESIGN_DECISIONS.md` | 왜 이렇게 결정했는가 (ADR, 특히 레거시와 갈라지는 지점) |
 | `documents/FINDINGS.md` | 구현 중 **무엇이 측정되었는가** (실측·위험·교훈) |
 | `documents/CONVENTIONS.md` | 컴포넌트를 어떤 규약으로 쓰고 문서를 어떻게 유지하는가 |
-| `documents/LEGACY_MAP.md` | v1.0의 무엇을 이식/개작/폐기했는가 |
+| `documents/REVIEW_v2.2.md` | 실측이 제안서의 어느 주장을 지지·기각하는가 — 재검토의 축 (뿌리 ①·②·③) |
+| `documents/archive/` | 보관 — 구판 제안서, v1.0 참조 지도(`LEGACY_MAP.md`) |
 | `documents/ROADMAP.md` | 어떤 순서로 구현하고 어느 게이트에서 멈추는가 |
 | `lsrr/<pkg>/README.md` | 이 폴더의 역할·경계·모듈 목록·계약 |
 
@@ -153,6 +154,7 @@
 | **I6** | 문맥 인코딩 입력에 정답 토큰이 포함되지 않으며, 손실 타깃은 정답 구간만(패딩은 `IGNORE_INDEX`) | 누출 시 전 실험 무효 | `data/prompting.py`, `objectives/targets.py` + `tests/contracts/test_no_leakage.py` |
 | **I7** | 보고되는 FLOPs·지연은 백본 1회 순전파를 **포함**한다. 측정 불가 시 `flops_includes_backbone: false`로 명시 플래그 | 백본 비용을 빼면 효율 비교가 무의미 | `metrics/cost.py` + `tests/contracts/test_cost_accounting.py` |
 | **I8** | `h_fusion`은 **백본 입력 임베딩 공간**의 벡터다 (`h_ctx`는 어댑터 통과 전 원본 `h^(L)`) | 주입 통로가 요구하는 공간 정합. 어댑터 공간 벡터를 주입하면 매니폴드 불일치 | `readout/fusion.py`, `readout/injection.py` + `tests/contracts/test_injection_space.py` |
+| **I9** | 질문 인코딩은 항상 **base 가중치만**으로 수행한다 — LoRA 는 디코딩 국면에만 활성(`adapters_disabled()`), `H` 는 LoRA 유무와 비트 단위 동일 | 인코딩에 LoRA 가 새면 H·KV 캐시 경제가 깨지고 Phase A/B 귀속(Ablation B)이 무너진다 (ADR-014) | `backbone/session.py` `encode` + `tests/contracts/test_encoding_is_base_only.py` |
 
 ---
 
@@ -229,6 +231,8 @@
 
 제안서 §7의 절제 실험표가 그대로 설정 스윕이 되어야 한다. 새 실험을 위해 새 파일을 만드는 일이 생긴다면 슬롯 설계가 틀린 것이다.
 
+> **문자 재배정 주의 (2026-09-16):** 아래 표의 A~E 는 v1 제안서의 절제 문자다. v2 에서 문자가 바뀌었다 — **A = 방출 구조**(ADR-016·018, `configs/ablation/A_emission_prosqa*.yaml`), **B = LoRA 수신 정렬**(Phase A vs B 체크포인트 비교), **C = 엔진 구조**(격하 — 킬 스위치 아님), **E = 공동 학습**(`configs/ablation/E_joint.yaml`, F-042). 메모리 범위 절제는 문자 없이 `memory.scope` 축으로 남는다. 설정 노브 자체는 그대로 유효하다.
+
 | 실험 | 설정 노브 | 설정 파일 |
 |---|---|---|
 | **A. 메모리 범위** | `memory.scope.type ∈ {final_only, all_layers, mid_band, late_band}` | `configs/ablation/A_memory_scope.yaml` |
@@ -247,7 +251,7 @@
 
 | Phase | 게이트 | 필요 패키지 (최소) |
 |---|---|---|
-| **Phase 0** (GPT-2 + 곱셈·ProsQA) | ① 자명해 붕괴 없음 ② M↑ → 정확도↑ ③ H+MLP 1회 통과 대비 유의한 우위 **(실패 시 킬 스위치)** ④ Δ⁽ᵐ⁾ 거시적 감소 | core, config, data, backbone, memory, engine, recurrence, termination, readout, objectives, runtime, metrics, telemetry, gates |
+| **Phase 0** (GPT-2 + 곱셈·ProsQA) | ① 자명해 붕괴 없음 ② M↑ → 정확도↑ ③ 단일 벡터(v1) 대비 궤적 방출의 유의한 우위 — 2단 구조, 2단(LoRA 정렬 후)이 킬 스위치 (ADR-016) **→ FAIL, 발동 (F-034)** ④ Δ⁽ᵐ⁾ 거시적 감소 | core, config, data, backbone, memory, engine, recurrence, termination, readout, objectives, runtime, metrics, telemetry, gates |
 | **Phase 1** (GSM8k-Aug 본 실험) | 종료 규칙 비교, 파레토 | + `termination/calibration.py`, `metrics/pareto.py`, `reporting` |
 | **Phase 2** (메커니즘·층화·전이) | 홉별 수렴, α 분포, logit lens, back-patching 회수율 | + `analysis` 전체, `backbone/interventions.py` |
 | **Phase 3** (선택: 스케일·재인코딩 외부 루프) | — | + 백본 확장 설정. 재인코딩 루프는 **I2의 명시적 예외 플래그** 하에서만 허용 |

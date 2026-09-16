@@ -3,7 +3,9 @@
 > **이 문서는 코드베이스의 현재 상태판이다.** 모듈을 추가·삭제·이동하거나 상태가 바뀌면 해당 폴더 `README.md`와 **이 표를 함께** 갱신한다 (`CONVENTIONS.md` §5).
 > 상태: `계획` · `구현중` · `구현`(동작함) · `검증`(테스트 통과)
 
-**최종 갱신:** 2026-09-11 · 전체 상태: **M5 완료 — 감독과 진단, Phase 0 게이트 판정기 (테스트 287종 통과)**
+**최종 갱신:** 2026-09-16 · 전체 상태: **M5 완료 + Phase 0 게이트 판정 완료(③ FAIL, 킬 스위치 발동 — F-034) — 재검토 단계. 테스트 468종 통과.**
+
+> 아래 패키지별 표는 M5 시점(2026-09-11) 기준이다. 이후 게이트·재검토 과정에서 추가된 모듈 — `runtime/phases.py`(2-phase), `runtime/curriculum.py`, `backbone/lora.py`, `memory/pipeline.py`(고정 중심화), `readout/fusion.py` 의 `PauseFusion`, `engine/stack.py`, `model.rollout` — 은 각 폴더 README 와 코드가 정본이다. 표의 전면 갱신은 재설계 ADR 확정 시 한 번에 한다.
 
 > 이 표의 `상태` 열이 **v1.0 폐기의 판정 근거**였다 (`LEGACY_MAP.md` §4). 이식/개작 항목이 전부 `검증` 이 되어 2026-09-11 에 작업 트리에서 레거시를 들어냈고, 내용은 `v1.0` 브랜치에 남아 있다.
 
@@ -50,7 +52,7 @@
 | `interfaces.py` | 전 슬롯의 추상 기반 클래스 | 검증 |
 | `types.py` | `DataSample`, `ContextBundle`, `CycleDiagnostics`, `ReasoningTrace`, `ReadoutResult`, `CostReport` | 검증 |
 | `registry.py` | 범용 레지스트리 + 슬롯별 인스턴스 | 검증 |
-| `invariants.py` | I1–I8 실행 시 단언 헬퍼 (인코딩 카운터, 동결 검사, 인스턴스 동일성) | 검증 |
+| `invariants.py` | I1–I9 실행 시 단언 헬퍼 (인코딩 카운터, 동결 검사, 인스턴스 동일성) | 검증 |
 | `errors.py` | 타입 예외 (`FrozenBackboneViolation`, `MultipleEncodeError`, `MissingTargetError`, `LeakageError`, …) | 검증 |
 
 ## `lsrr/config/` — 설정 처리
